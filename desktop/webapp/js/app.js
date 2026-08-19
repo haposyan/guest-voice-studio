@@ -1,17 +1,17 @@
 // ============================================================================
-// app.js — shell, router, navigation, permission gating.
+// app.js — shell, router.
 //
-// v2 pivot: single-store desktop app. Routing gained a first-run "setup"
-// step (name the one store this install serves) ahead of the existing
-// role-picker login, and every "which stores can this user see" question
-// collapses to "the one local store" — allowedStoreIds() is kept as a
-// function (rather than deleted) purely so screens ported from the web
-// version didn't need their import lines touched.
+// v2 pivot: single-store desktop app. Routing has a first-run "setup" step
+// (pick the 休暇村 this install serves) and then goes straight to the app —
+// no login/role-picker screen (real-world feedback: on a single PC used by
+// one small team, a role picker added confusion with no clear benefit —
+// "そもそも違いが判りません"). can() and allowedStoreIds() are kept as
+// functions (rather than deleted) purely so screens ported from the earlier
+// multi-role/multi-store versions didn't need every call site rewritten.
 // ============================================================================
 
 import { db } from "./db.js";
 import { mountSetup } from "./screens/setup.js";
-import { mountLogin } from "./screens/login.js";
 import { mountLobby } from "./screens/lobby.js";
 import { mountGuestVoice } from "./screens/guestvoice.js";
 import { mountCompare } from "./screens/compare.js";
@@ -22,31 +22,24 @@ import { mountReportStudio } from "./screens/reportstudio.js";
 import { mountSettings } from "./screens/settings.js";
 
 const SCREENS = [
-  { key: "lobby", en: "Lobby", ja: "ダッシュボード", mount: mountLobby, roles: ["拠点設定担当", "拠点利用者", "閲覧者"] },
-  { key: "guestvoice", en: "Guest Voice", ja: "お客様の声", mount: mountGuestVoice, roles: ["拠点設定担当", "拠点利用者", "閲覧者"] },
-  { key: "compare", en: "Compare", ja: "期間比較", mount: mountCompare, roles: ["拠点設定担当", "拠点利用者", "閲覧者"] },
-  { key: "actionboard", en: "Action Board", ja: "改善課題", mount: mountActionBoard, roles: ["拠点設定担当", "拠点利用者", "閲覧者"] },
-  { key: "import", en: "Import", ja: "CSV取込", mount: mountImport, roles: ["拠点設定担当"] },
-  { key: "history", en: "History", ja: "履歴", mount: mountHistory, roles: ["拠点設定担当", "拠点利用者", "閲覧者"] },
-  { key: "reportstudio", en: "Report Studio", ja: "報告書", mount: mountReportStudio, roles: ["拠点設定担当", "拠点利用者", "閲覧者"] },
-  { key: "settings", en: "Settings", ja: "設定", mount: mountSettings, roles: ["拠点設定担当"] },
+  { key: "lobby", en: "Lobby", ja: "ダッシュボード", mount: mountLobby },
+  { key: "guestvoice", en: "Guest Voice", ja: "お客様の声", mount: mountGuestVoice },
+  { key: "compare", en: "Compare", ja: "期間比較", mount: mountCompare },
+  { key: "actionboard", en: "Action Board", ja: "改善課題", mount: mountActionBoard },
+  { key: "import", en: "Import", ja: "CSV取込", mount: mountImport },
+  { key: "history", en: "History", ja: "履歴", mount: mountHistory },
+  { key: "reportstudio", en: "Report Studio", ja: "報告書", mount: mountReportStudio },
+  { key: "settings", en: "Settings", ja: "設定", mount: mountSettings },
 ];
 
 export function allowedStoreIds() {
   return [db.LOCAL_STORE_ID];
 }
 
-export function can(action) {
-  const u = db.currentUser();
-  if (!u) return false;
-  const rules = {
-    editTasks: ["拠点設定担当", "拠点利用者"],
-    manageSettings: ["拠点設定担当"],
-    importCsv: ["拠点設定担当"],
-    createDraft: ["拠点設定担当", "拠点利用者"],
-    deleteData: ["拠点設定担当"],
-  };
-  return (rules[action] || []).includes(u.role);
+// No roles anymore — every local action is allowed. Kept so screens that
+// still call can("editTasks") etc. don't need touching.
+export function can() {
+  return true;
 }
 
 function currentScreenKey() {
@@ -57,7 +50,6 @@ function currentScreenKey() {
 function renderShell() {
   const user = db.currentUser();
   const app = document.getElementById("app");
-  const visibleScreens = SCREENS.filter((s) => s.roles.includes(user.role));
   const storeName = db.storeName(db.LOCAL_STORE_ID);
   app.innerHTML = `
     <div class="app-shell">
@@ -70,7 +62,7 @@ function renderShell() {
           </div>
         </div>
         <nav class="stack" style="gap:2px">
-          ${visibleScreens.map((s) => `
+          ${SCREENS.map((s) => `
             <button class="nav-item" data-nav="${s.key}">
               <span>
                 <span class="en">${s.en}</span>
@@ -84,8 +76,6 @@ function renderShell() {
             <span>👤</span>
             <span>${user.name}</span>
           </div>
-          <div style="margin-top:4px"><span class="role-badge">${user.role}</span></div>
-          <button class="logout-btn" id="logoutBtn">権限を切り替える</button>
         </div>
       </aside>
       <div class="main">
@@ -100,10 +90,6 @@ function renderShell() {
       </div>
     </div>
   `;
-  document.getElementById("logoutBtn").onclick = () => {
-    db.session = null;
-    render();
-  };
   app.querySelectorAll("[data-nav]").forEach((btn) => {
     btn.onclick = () => { location.hash = btn.dataset.nav; };
   });
@@ -111,11 +97,8 @@ function renderShell() {
 }
 
 function renderScreen() {
-  const user = db.currentUser();
-  if (!user) return;
   const key = currentScreenKey();
-  const visibleScreens = SCREENS.filter((s) => s.roles.includes(user.role));
-  const screen = visibleScreens.find((s) => s.key === key) || visibleScreens[0];
+  const screen = SCREENS.find((s) => s.key === key) || SCREENS[0];
   document.querySelectorAll("[data-nav]").forEach((btn) => {
     btn.classList.toggle("active", btn.dataset.nav === screen.key);
   });
@@ -133,17 +116,11 @@ export function render() {
     mountSetup(app, () => render());
     return;
   }
-  const session = db.session;
-  if (!session) {
-    app.innerHTML = "";
-    mountLogin(app, () => render());
-    return;
-  }
   renderShell();
 }
 
 window.addEventListener("hashchange", () => {
-  if (db.session) renderScreen();
+  if (db.isConfigured) renderScreen();
 });
 
 render();

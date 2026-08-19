@@ -69,6 +69,20 @@ const ID_HEADER_CANDIDATES = ["回答ID", "ID", "id", "response_id"];
 const DATE_HEADER_CANDIDATES = ["回答日", "日付", "date", "response_date"];
 const STORE_HEADER_CANDIDATES = ["拠点名", "拠点", "店舗名", "store", "store_name"];
 
+// Columns matching this pattern are never imported (§7 個人情報: "分析に
+// 不要な氏名・電話・メール等の列は取り込まない"). importRows() already only
+// ever reads columns explicitly named by itemMappings/ID/date/store — this
+// list exists to (a) surface a clear "these columns are ignored" notice in
+// the import preview, (b) refuse to honor an item mapping that was
+// accidentally pointed at one of these columns, and (c) redact these
+// columns' values out of the stored CSV original when IMP-06's
+// "CSV原本を保存する" is turned on.
+const PERSONAL_DATA_HEADER_PATTERN = /メール|mail|e-?mail|氏名|お名前|名前|氏\b|担当者名|電話|tel|phone|携帯|住所|address|生年月日|誕生日|birthday/i;
+
+export function isPersonalDataColumn(header) {
+  return PERSONAL_DATA_HEADER_PATTERN.test(header);
+}
+
 function pickHeader(headers, candidates) {
   return candidates.find((c) => headers.includes(c)) || null;
 }
@@ -130,6 +144,8 @@ export function buildPreview(parsed, itemMappings, stores) {
     if (!idHeader) missingIdCount++;
   });
 
+  const personalDataColumns = headers.filter((h) => isPersonalDataColumn(h));
+
   return {
     totalRows: rows.length,
     idHeader, dateHeader, storeHeader,
@@ -139,8 +155,35 @@ export function buildPreview(parsed, itemMappings, stores) {
     periodStart: minDate, periodEnd: maxDate,
     missingIdCount, invalidDateCount,
     hasIdColumn: !!idHeader,
+    personalDataColumns,
   };
 }
+
+// Blanks out the *values* (not the header) of any personal-data-looking
+// column, for when the CSV original is kept (IMP-06). The column stays so
+// the file remains structurally valid, but the sensitive cells don't.
+export function redactPersonalColumns(parsed) {
+  const { headers, rows } = parsed;
+  const personalCols = headers.filter((h) => isPersonalDataColumn(h));
+  if (!personalCols.length) return parsed;
+  const redactedRows = rows.map((r) => {
+    const copy = { ...r };
+    personalCols.forEach((h) => { if (copy[h]) copy[h] = "[非表示]"; });
+    return copy;
+  });
+  return { headers, rows: redactedRows };
+}
+
+function toCsvText(parsed) {
+  const esc = (v) => {
+    const s = String(v ?? "");
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const lines = [parsed.headers.map(esc).join(",")];
+  parsed.rows.forEach((r) => lines.push(parsed.headers.map((h) => esc(r[h])).join(",")));
+  return lines.join("\r\n");
+}
+export { toCsvText };
 
 // Commits rows into flattened per-item records. Dedupe key = response ID.
 // Rows without an ID cannot be deduped — they are imported but flagged.
@@ -182,8 +225,10 @@ export function importRows(parsed, itemMappings, stores, existingRecords, batchI
     let anyData = false;
     const itemRecords = [];
     itemMappings.forEach((im) => {
-      const ratingRaw = r[im.ratingCol];
-      const commentRaw = r[im.commentCol];
+      // Refuse to read a column that looks like personal data even if an
+      // item mapping was mistakenly pointed at it (§7 個人情報).
+      const ratingRaw = isPersonalDataColumn(im.ratingCol) ? undefined : r[im.ratingCol];
+      const commentRaw = isPersonalDataColumn(im.commentCol) ? undefined : r[im.commentCol];
       const hasRating = ratingRaw !== undefined && ratingRaw !== "" && !isNaN(Number(ratingRaw));
       const hasComment = commentRaw !== undefined && commentRaw.trim() !== "";
       if (!hasRating && !hasComment) return;

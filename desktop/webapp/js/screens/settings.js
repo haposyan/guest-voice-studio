@@ -17,7 +17,6 @@ const TABS = [
   { key: "store", label: "拠点情報" },
   { key: "items", label: "項目マッピング" },
   { key: "words", label: "除外語" },
-  { key: "users", label: "ローカル権限" },
   { key: "recipients", label: "報告先" },
   { key: "backup", label: "バックアップ" },
   { key: "brand", label: "ブランド・保存設定" },
@@ -42,7 +41,7 @@ function render(root) {
   `;
   root.querySelectorAll("[data-tab]").forEach((b) => b.onclick = () => { activeTab = b.dataset.tab; render(root); });
   const panel = root.querySelector("#panel");
-  ({ store: renderStore, items: renderItems, words: renderWords, users: renderUsers, recipients: renderRecipients, backup: renderBackup, brand: renderBrand })[activeTab](panel, root);
+  ({ store: renderStore, items: renderItems, words: renderWords, recipients: renderRecipients, backup: renderBackup, brand: renderBrand })[activeTab](panel, root);
 }
 
 // ---------------------------------------------------------------------------
@@ -208,37 +207,6 @@ function renderWords(panel, root) {
     db.excludedWords = ew2; panel.querySelector("#newItemWord").value = ""; renderItemWords();
   };
   renderItemWords();
-}
-
-// ---------------------------------------------------------------------------
-function renderUsers(panel, root) {
-  const users = db.users;
-  panel.innerHTML = `
-    <div class="card">
-      <div class="card-title"><h3>ローカル権限（AUTH-02）</h3></div>
-      <p class="hint">本部権限はありません。この端末（拠点）内で「設定変更可」と「通常利用」を分けられます。Windows／Microsoft 365サインインは不要です（AUTH-04）。</p>
-      <div class="table-wrap"><table><thead><tr><th>表示名</th><th>役割</th></tr></thead><tbody>
-        ${users.map((u) => `<tr>
-          <td><input type="text" data-name="${u.id}" value="${escapeHtml(u.name)}"></td>
-          <td><select data-role="${u.id}">
-            ${["拠点設定担当","拠点利用者","閲覧者"].map((r) => `<option ${u.role===r?"selected":""}>${r}</option>`).join("")}
-          </select></td>
-        </tr>`).join("")}
-      </tbody></table></div>
-      <button class="btn small primary" id="saveUsers" style="margin-top:10px">保存</button>
-    </div>
-  `;
-  panel.querySelector("#saveUsers").onclick = () => {
-    const list = db.users.map((u) => ({
-      ...u,
-      name: panel.querySelector(`[data-name="${u.id}"]`).value.trim() || u.name,
-      role: panel.querySelector(`[data-role="${u.id}"]`).value,
-      storeIds: [db.LOCAL_STORE_ID],
-    }));
-    db.users = list;
-    db.audit("settings_users_update", "users", "");
-    toast("保存しました", "good");
-  };
 }
 
 // ---------------------------------------------------------------------------
@@ -412,9 +380,15 @@ function renderBrand(panel) {
     <div class="card">
       <div class="card-title"><h3>保存先</h3></div>
       ${isDesktop ? `
-        <p class="hint" style="margin-bottom:8px">このアプリのデータは、Windowsの管理者権限を必要としないユーザー専用領域に保存されています（§7 保存先）。</p>
+        <p class="hint" style="margin-bottom:8px">初回起動時に選んだ場所に保存されています（管理者権限は不要／§7 保存先）。</p>
         <div class="path-box"><span>${escapeHtml(nativeInfo.dataDir || "")}</span><span class="spacer"></span><button class="btn small" id="openDataDir">エクスプローラーで開く</button></div>
+        <p class="hint" style="margin-top:8px">保存先を変更するには、この場所ごとフォルダを移動したうえで、
+        <code>%LOCALAPPDATA%\\GuestVoiceStudio.location</code> というファイルをテキストエディタで開き、新しい保存先のパスに書き換えてください（次回起動時から反映されます）。</p>
       ` : `<p class="hint">ブラウザモードで実行中のため、ブラウザのlocalStorageに保存されています（開発・確認用）。</p>`}
+    </div>
+    <div class="card">
+      <div class="card-title"><h3>個人情報の保護</h3></div>
+      <p class="hint">CSVに含まれるメールアドレス・氏名・電話番号などの列は自動検出し、取り込みません（値を保存しません）。CSV原本を保存する設定の場合も、該当列の値はマスクした状態で保存します（§7 個人情報）。</p>
     </div>
     <div class="card">
       <div class="card-title"><h3>試作データのリセット</h3></div>

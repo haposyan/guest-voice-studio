@@ -34,6 +34,7 @@ public partial class MainWindow : Window
     {
         try
         {
+            CreateDesktopShortcutIfMissing();
             await InitializeWebViewAsync();
         }
         catch (Exception ex)
@@ -52,8 +53,7 @@ public partial class MainWindow : Window
 
     private async System.Threading.Tasks.Task InitializeWebViewAsync()
     {
-        var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-        var appRoot = Path.Combine(localAppData, "GuestVoiceStudio");
+        var appRoot = ResolveDataRoot();
         _dataDir = appRoot;
         Directory.CreateDirectory(appRoot);
         Directory.CreateDirectory(Path.Combine(appRoot, "Reports"));
@@ -97,6 +97,7 @@ public partial class MainWindow : Window
             reportsDir = Path.Combine(_dataDir, "Reports"),
             backupsDir = Path.Combine(_dataDir, "Backups"),
             appVersion = "1.0.0-local",
+            windowsUserName = Environment.UserName,
         });
         await Browser.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(
             $"window.__NATIVE__ = {nativeContext};");
@@ -111,6 +112,87 @@ public partial class MainWindow : Window
         Browser.CoreWebView2.Settings.AreDevToolsEnabled = true; // left on to support field troubleshooting
 
         Browser.CoreWebView2.Navigate("https://appassets.local/index.html");
+    }
+
+    /// <summary>
+    /// Where app data lives is chosen once, on first launch, per the request
+    /// to make the save location configurable during initial setup rather
+    /// than buried in Settings. A small locator file at a FIXED, well-known
+    /// path (%LOCALAPPDATA%\GuestVoiceStudio.location) — itself never
+    /// user-relocatable — records where the real data folder actually is, so
+    /// later launches can find it even if the user picked a custom drive.
+    /// </summary>
+    private string ResolveDataRoot()
+    {
+        var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        var defaultRoot = Path.Combine(localAppData, "GuestVoiceStudio");
+        var locatorPath = Path.Combine(localAppData, "GuestVoiceStudio.location");
+
+        if (File.Exists(locatorPath))
+        {
+            var saved = File.ReadAllText(locatorPath).Trim();
+            if (!string.IsNullOrWhiteSpace(saved)) return saved;
+        }
+
+        // First launch: let the user confirm or change where data is saved.
+        var chosen = defaultRoot;
+        var result = MessageBox.Show(
+            "データの保存先（初期設定）\n\n" +
+            $"既定の保存先:\n{defaultRoot}\n\n" +
+            "この場所でよろしいですか？\n「いいえ」を選ぶと保存先フォルダを選択できます。",
+            "初期設定 - 保存先の選択", MessageBoxButton.YesNo, MessageBoxImage.Question);
+
+        if (result == MessageBoxResult.No)
+        {
+            var dlg = new OpenFolderDialog
+            {
+                Title = "データの保存先フォルダを選択してください",
+                Multiselect = false,
+            };
+            if (dlg.ShowDialog(this) == true && !string.IsNullOrWhiteSpace(dlg.FolderName))
+            {
+                chosen = dlg.FolderName;
+            }
+        }
+
+        Directory.CreateDirectory(chosen);
+        File.WriteAllText(locatorPath, chosen);
+        return chosen;
+    }
+
+    /// <summary>
+    /// Creates a Desktop shortcut to this exe on first launch, so the user
+    /// doesn't have to keep navigating to wherever the exe was unzipped.
+    /// Idempotent — does nothing once the shortcut already exists (even if
+    /// the user later deletes it, which is treated as an intentional choice).
+    /// </summary>
+    private static void CreateDesktopShortcutIfMissing()
+    {
+        try
+        {
+            var desktopDir = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
+            var shortcutPath = Path.Combine(desktopDir, "Guest Voice Studio.lnk");
+            var markerPath = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "GuestVoiceStudio.shortcut-created");
+            if (File.Exists(markerPath)) return;
+
+            var exePath = Environment.ProcessPath ?? Path.Combine(AppContext.BaseDirectory, "GuestVoiceStudio.exe");
+
+            dynamic shell = Activator.CreateInstance(Type.GetTypeFromProgID("WScript.Shell")!)!;
+            var shortcut = shell.CreateShortcut(shortcutPath);
+            shortcut.TargetPath = exePath;
+            shortcut.WorkingDirectory = Path.GetDirectoryName(exePath);
+            shortcut.IconLocation = exePath + ",0";
+            shortcut.Description = "お客様の声・改善管理（Guest Voice Studio）";
+            shortcut.Save();
+
+            File.WriteAllText(markerPath, DateTime.Now.ToString("O"));
+        }
+        catch
+        {
+            // Best-effort only — a missing shortcut is not fatal, the exe still works directly.
+        }
     }
 
     private async void CoreWebView2_WebMessageReceived(object? sender, CoreWebView2WebMessageReceivedEventArgs e)

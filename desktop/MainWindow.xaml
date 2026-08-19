@@ -10,10 +10,28 @@
         Background="#FAF6EE">
     <Grid>
         <wv2:WebView2 x:Name="Browser" />
+        <!--
+          Startup splash: shown until the web app finishes its first
+          navigation (see NavigationCompleted in MainWindow.xaml.cs). The
+          badge below is a placeholder wordmark, not the official 休暇村 logo
+          artwork — swap the Border's content for an <Image> once a real
+          logo file is supplied (see desktop/README.md).
+        -->
         <Border x:Name="LoadingOverlay" Background="#FAF6EE">
             <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
-                <TextBlock Text="Guest Voice Studio" FontSize="22" FontWeight="Bold" Foreground="#17324D" HorizontalAlignment="Center"/>
-                <TextBlock Text="起動しています…" FontSize="13" Foreground="#6B6455" Margin="0,8,0,0" HorizontalAlignment="Center"/>
+                <Border Width="88" Height="88" CornerRadius="20" HorizontalAlignment="Center" Margin="0,0,0,18">
+                    <Border.Background>
+                        <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                            <GradientStop Color="#DDC48F" Offset="0"/>
+                            <GradientStop Color="#B28A4A" Offset="1"/>
+                        </LinearGradientBrush>
+                    </Border.Background>
+                    <TextBlock Text="休暇村" FontSize="22" FontWeight="Bold" Foreground="#17324D"
+                               HorizontalAlignment="Center" VerticalAlignment="Center" TextAlignment="Center"/>
+                </Border>
+                <TextBlock Text="Guest Voice Studio" FontSize="24" FontWeight="Bold" Foreground="#17324D" HorizontalAlignment="Center"/>
+                <TextBlock Text="お客様の声を確認するツールです" FontSize="14" Foreground="#B28A4A" FontWeight="SemiBold" Margin="0,6,0,0" HorizontalAlignment="Center"/>
+                <TextBlock Text="起動しています…" FontSize="12" Foreground="#6B6455" Margin="0,14,0,0" HorizontalAlignment="Center"/>
             </StackPanel>
         </Border>
     </Grid>

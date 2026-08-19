@@ -3,7 +3,7 @@
 // ============================================================================
 
 import { db } from "../db.js";
-import { readFileSmart, parseCsv, buildPreview, importRows } from "../csv.js";
+import { readFileSmart, parseCsv, buildPreview, importRows, redactPersonalColumns, toCsvText } from "../csv.js";
 import { toast, escapeHtml } from "../components/ui.js";
 
 let state = { file: null, text: null, encoding: null, parsed: null, preview: null };
@@ -77,6 +77,7 @@ function renderPreview(root) {
         <div class="stat-tile"><div class="label">拠点数（ファイル内）</div><div class="value">${preview.storeNamesInFile.length}</div></div>
         <div class="stat-tile"><div class="label">回答ID未設定</div><div class="value">${preview.missingIdCount}<span class="unit">件</span></div></div>
       </div>
+      ${preview.personalDataColumns.length ? `<p class="hint" style="color:var(--info)">🔒 個人情報らしき列を検出しました。これらの列は取り込みません（値を保存しません）: ${preview.personalDataColumns.map(escapeHtml).join(", ")}</p>` : ""}
       ${!preview.hasIdColumn ? `<p class="hint" style="color:var(--warn);margin-top:10px">⚠ 回答ID列が見つかりません。重複排除ができないため、全件「要確認」として取り込まれます（IMP-04）。</p>` : ""}
       ${preview.unmatchedStores.length ? `<p class="hint" style="color:var(--bad)">⚠ 拠点名が一致しません: ${preview.unmatchedStores.map(escapeHtml).join(", ")}（Settingsで表記揺れを登録してください／MAP-04）</p>` : ""}
       ${preview.invalidDateCount ? `<p class="hint" style="color:var(--bad)">⚠ 日付が不正な行: ${preview.invalidDateCount}件</p>` : ""}
@@ -117,7 +118,9 @@ function commitImport(root) {
     periodStart: state.preview.periodStart,
     periodEnd: state.preview.periodEnd,
     keepRawCsv: db.brand.keepRawCsv,
-    rawCsv: db.brand.keepRawCsv ? state.text : null,
+    // Personal-data-looking columns (メール/氏名/電話...) are redacted even
+    // in the kept original — see csv.js redactPersonalColumns (§7 個人情報).
+    rawCsv: db.brand.keepRawCsv ? toCsvText(redactPersonalColumns(state.parsed)) : null,
   });
   db.importBatches = batches;
   db.audit("csv_import", batchId, `${state.file.name} 成功${result.success}件 重複${result.duplicate}件 エラー${result.error}件`);
