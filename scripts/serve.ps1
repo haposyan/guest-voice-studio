@@ -2,9 +2,14 @@
 # this environment). Serves the app directory over HTTP so ES modules load
 # under a proper origin instead of file:// (which browsers block for modules).
 param(
-  [int]$Port = 8843
+  [int]$Port = 8843,
+  [string]$Root = ""
 )
-$root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+if ($Root -ne "") {
+  $root = (Resolve-Path $Root).Path
+} else {
+  $root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+}
 $listener = New-Object System.Net.HttpListener
 $listener.Prefixes.Add("http://localhost:$Port/")
 $listener.Start()

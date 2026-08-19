@@ -1,10 +1,24 @@
-# Guest Voice Studio（お客様の声・改善管理Webアプリ）試作版
+# Guest Voice Studio（お客様の声・改善管理）
+
+> ## ⚠ 重要：v2で「Windowsローカルデスクトップアプリ」に方針転換しました
+>
+> `customer_voice_requirements_local_v2.docx`（第2版）により、要件がWebアプリから
+> **Windowsローカルデスクトップアプリ（1拠点専用・サーバー不要・管理者権限不要）**
+> に変更されました。**現行の実装は [`desktop/`](desktop/) フォルダです。**
+> ビルド方法・起動方法・技術詳細は [desktop/README.md](desktop/README.md) を参照してください。
+>
+> 以下はv1（Webアプリ版・35拠点対応）の記録です。コード自体は `desktop/webapp/` に
+> 移植・改修した上で存続しており、参考として残しています。
+
+---
+
+# v1: Guest Voice Studio（お客様の声・改善管理Webアプリ）試作版 [アーカイブ]
 
 `customer_voice_requirements.docx` の要件定義書に基づく MVP 試作品です。
 35拠点のアンケート（5段階評価＋自由記述）CSVを取り込み、分析・改善課題管理・
 期間比較・PDF報告書・Outlook下書き連携までを、ビルド不要の単一Webアプリとして実装しています。
 
-## 公開URL（GitHub Pages）
+## 公開URL（GitHub Pages・v1アーカイブ）
 
 **https://haposyan.github.io/guest-voice-studio/**
 

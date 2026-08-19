@@ -1,0 +1,20 @@
+<Window x:Class="GuestVoiceStudio.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
+        xmlns:local="clr-namespace:GuestVoiceStudio"
+        mc:Ignorable="d"
+        Title="お客様の声・改善管理 | Guest Voice Studio" Height="900" Width="1440"
+        Background="#FAF6EE">
+    <Grid>
+        <wv2:WebView2 x:Name="Browser" />
+        <Border x:Name="LoadingOverlay" Background="#FAF6EE">
+            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+                <TextBlock Text="Guest Voice Studio" FontSize="22" FontWeight="Bold" Foreground="#17324D" HorizontalAlignment="Center"/>
+                <TextBlock Text="起動しています…" FontSize="13" Foreground="#6B6455" Margin="0,8,0,0" HorizontalAlignment="Center"/>
+            </StackPanel>
+        </Border>
+    </Grid>
+</Window>

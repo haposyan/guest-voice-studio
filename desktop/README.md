@@ -1,0 +1,122 @@
+# Guest Voice Studio — ローカル版（Windowsデスクトップアプリ）
+
+`customer_voice_requirements_local_v2.docx`（第2版）に基づく実装です。**Webアプリ版（`../`
+以下）はv2で廃止された旧仕様**であり、このフォルダが現行の実装です。第2版の変更点は
+ドキュメント本文の「14. 第2版の変更点」を参照してください（要約：サーバー廃止／
+1拠点専用のローカル起動／管理者権限不要／Outlook連携をEML中心に変更／本部機能廃止／
+ワードクラウードの3色分け追加）。
+
+## これは何か
+
+- Windows 10/11 で動く**ローカル起動のデスクトップアプリ**（`.exe` を実行するだけ）。
+- Webサーバー・インターネット接続は不要。**管理者権限も一切不要**（インストール・起動・
+  更新・アンインストールのすべて）。
+- 中身は前段で作った Web 版（HTML/CSS/JS）をほぼそのまま流用し、
+  [WebView2](https://learn.microsoft.com/microsoft-edge/webview2/)（Windowsに標準搭載の
+  Chromiumエンジン）で表示する薄いシェル（WPF/C#）でラップしています。UIロジックの
+  大部分はブラウザでも単体テストできる状態を保っています。
+
+## ビルド方法
+
+.NET 8 SDK が必要です（管理者権限不要でユーザー領域にインストール可能）。
+
+```powershell
+# .NET SDK が無い場合（ユーザー領域にインストール、管理者権限不要）
+Invoke-WebRequest https://dot.net/v1/dotnet-install.ps1 -OutFile dotnet-install.ps1
+./dotnet-install.ps1 -Channel 8.0 -InstallDir "$env:LOCALAPPDATA\dotnet-sdk" -NoPath
+
+# ビルド（デバッグ実行）
+& "$env:LOCALAPPDATA\dotnet-sdk\dotnet.exe" build
+
+# 配布用ビルド（自己完結・単一exe。.NETランタイムのインストール不要で配布できる）
+& "$env:LOCALAPPDATA\dotnet-sdk\dotnet.exe" publish -c Release -r win-x64
+# 出力: desktop\bin\Release\net8.0-windows\win-x64\publish\GuestVoiceStudio.exe
+```
+
+`GuestVoiceStudio.exe` をコピーして配布し、ダブルクリックするだけで起動します
+（拠点PCへのインストーラー配布は §14 の運用方針どおり、休暇村協会側の配布プロセスを
+想定。この試作では単一exeの配布まで用意しています。要確認事項参照）。
+
+## 動かしてみる
+
+1. `GuestVoiceStudio.exe` を実行
+2. 初回起動：拠点名を入力（例：〇〇休暇村）
+3. ローカル権限を選択（拠点設定担当／拠点利用者／閲覧者）
+4. 左メニュー「Import｜CSV取込」→ サンプルCSVを取り込む
+   - `desktop/scripts/generate_local_sample.ps1` で単一拠点用サンプルCSVを生成できます
+     （`webapp/data/sample_local.csv` に出力済み）
+5. Guest Voice / Compare / Action Board / Report Studio を試す
+
+## データの保存先
+
+`%LOCALAPPDATA%\GuestVoiceStudio\` 配下（Windowsの一般ユーザー領域。管理者権限不要）。
+
+- `WebView2Data\` — WebView2のプロファイル。アプリの全データ（回答、改善課題、設定等）は
+  ブラウザの localStorage としてこの中に保存されます。
+- `Reports\` — Report Studioで生成したPDF/EMLの既定の保存先。
+- `Backups\` — （将来のデフォルト保存先。現状はSettings画面の保存ダイアログで都度選択）
+
+Settings ＞ ブランド・保存設定 ＞「エクスプローラーで開く」でこのフォルダを直接開けます。
+
+## アーキテクチャ
+
+```
+desktop/
+  GuestVoiceStudio.csproj   .NET 8 / WPF プロジェクト
+  app.manifest              requestedExecutionLevel=asInvoker を明示（無管理者権限の保証）
+  MainWindow.xaml(.cs)      WebView2ホスト + ネイティブブリッジ（7コマンドのみ）
+  webapp/                   Web版から移植したUI本体（そのままEdge/Chromeでも動作確認可能）
+```
+
+### ネイティブブリッジ（`webapp/js/native.js` ⇄ `MainWindow.xaml.cs`）
+
+`window.chrome.webview.postMessage` 経由の JSON リクエスト/レスポンスのみ。7コマンドに
+絞ることで、Web版のロジックをほぼ無改造で流用できるようにしています。
+
+| コマンド | 用途 |
+|---|---|
+| `printToPdf` | `CoreWebView2.PrintToPdfAsync` によるネイティブPDF出力（印刷ダイアログ不要） |
+| `readFileBytes` / `writeFileBytes` | ローカルファイルの読み書き（Base64経由） |
+| `pickSaveFile` / `pickOpenFile` | ネイティブのファイル保存/選択ダイアログ |
+| `openPath` | 既定のアプリでファイルを開く（.emlをOutlook等に渡す） |
+| `revealInExplorer` | エクスプローラーでフォルダを開く |
+
+`js/native.js` は `window.__NATIVE__`（デスクトップシェルが起動時に注入）の有無で
+自動的にブラウザフォールバックへ切り替わるため、**`webapp/` フォルダは単体でも
+（`../scripts/serve.ps1` 等で）ブラウザ上で動作確認できます**。実際、この試作の大半の
+画面はまずブラウザ上で検証してからデスクトップシェルに統合しました。
+
+### PDF・Outlook連携の実装方針（v2要件との対応）
+
+- **MAIL-02 / PDF添付**：`CoreWebView2.PrintToPdfAsync` でヘッドレスに実PDFファイルを
+  生成し、そのバイト列を読み込んで `.eml` に直接埋め込みます（ブラウザの印刷ダイアログ
+  に依存しない、Web版からの明確な改善点）。
+- **MAIL-05（必須）**：宛先・件名・本文・PDF添付を含む `.eml` を `webapp/js/eml.js` で
+  RFC5322/MIME準拠で自前生成し保存します。外部ライブラリ不使用。
+- **MAIL-04（推奨）**：生成した `.eml` を既定のメールソフトで自動的に開きます
+  （`openPath`）。Outlookが既定の場合はOutlookが開きますが、**「新規下書きとして編集
+  可能な状態で開く」ことまでは保証していません**（Outlook/Windows Mailの実装依存。
+  多くの場合は閲覧→転送/編集の一手間が必要になる可能性があります。実機での検証を
+  推奨——要確認事項）。
+
+## v2で削除された機能（Web版から見た差分）
+
+- 本部権限・全拠点集約・拠点間比較（Compare画面は「期間比較」のみ、拠点別ではなく
+  「項目別比較」に変更）
+- Microsoft 365認証（ローカル権限選択のみに簡素化）
+- サーバー同期（暗号化バックアップのエクスポート/インポートに置き換え。
+  Settings＞バックアップ、AES-256-GCM、Web Crypto API使用）
+
+## 既知の制限（正直に明記）
+
+- **WebView2ランタイム依存**：Windows 11は標準搭載ですが、Windows 10の一部環境では
+  Evergreen ランタイムの導入が必要な場合があります（管理者権限不要でインストール可能
+  ですが、実機未検証——要確認事項）。
+- **形態素解析なし**：Web版と同様、簡易な語抽出ロジックです（`webapp/js/tokenizer.js`）。
+- **Outlook下書きの正確な起動可否は実機未検証**：クラシックOutlook／新しいOutlook／
+  Windows Mailで挙動が異なる可能性があります（§11 要確認事項「Microsoft 365許可」）。
+- **署名済みインストーラーは未作成**：単一exeの配布までを用意しています。休暇村協会側で
+  コード署名・インストーラー化（MSIX等）を行う場合は別途検討が必要です。
+- **この開発環境ではGUIの目視確認ができません**：ビルド成功・プロセス起動・
+  WebView2プロファイル生成（`%LOCALAPPDATA%\GuestVoiceStudio\WebView2Data\EBWebView`）
+  までは確認していますが、実際の画面表示や操作感は実機での確認をお願いします。
