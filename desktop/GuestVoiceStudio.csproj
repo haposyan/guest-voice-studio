@@ -11,8 +11,15 @@
     <Platforms>x64</Platforms>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <SelfContained>true</SelfContained>
-    <PublishSingleFile>true</PublishSingleFile>
-    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <!--
+      PublishSingleFile is intentionally NOT used: with the ~650MB WebView2
+      Fixed Version runtime bundled alongside as loose Content (see below),
+      single-file packing pulled msedgewebview2.exe/msedge.dll etc. into the
+      bundle's self-extractor instead of leaving them as real files at
+      webview2runtime\, which broke the browserExecutableFolder lookup in
+      MainWindow.xaml.cs. The distribution is already multi-file (exe +
+      webapp\ + webview2runtime\) so single-file packing bought nothing here.
+    -->
     <InvariantGlobalization>false</InvariantGlobalization>
   </PropertyGroup>
 
@@ -22,6 +29,17 @@
 
   <ItemGroup>
     <Content Include="webapp\**\*.*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <!--
+      Fixed Version WebView2 Runtime, bundled so end users never need to
+      install anything separately (no admin rights, no internet at runtime,
+      no dependency on Windows 10 machines having the Evergreen runtime —
+      see MainWindow.xaml.cs InitializeWebViewAsync). Not checked into git
+      (~650MB); fetched by desktop/scripts/fetch_webview2_runtime.ps1 and
+      only present locally / in CI before a Release build.
+    -->
+    <Content Include="webview2runtime\**\*.*" Condition="Exists('webview2runtime')">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
   </ItemGroup>

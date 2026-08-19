@@ -25,17 +25,26 @@
 Invoke-WebRequest https://dot.net/v1/dotnet-install.ps1 -OutFile dotnet-install.ps1
 ./dotnet-install.ps1 -Channel 8.0 -InstallDir "$env:LOCALAPPDATA\dotnet-sdk" -NoPath
 
+# WebView2 Fixed Version ランタイムを同梱する（初回のみ・約650MB・数分かかります）
+# これを行わないと、WebView2が未導入のPCで「WebView2ランタイムの初期化に失敗しました」
+# というエラーで起動できません（Windows 11でも100%内蔵とは限りません）。
+./scripts/fetch_webview2_runtime.ps1
+# 出力: desktop\webview2runtime\（.gitignore対象。ビルド時にexeの隣へ自動コピーされる）
+
 # ビルド（デバッグ実行）
 & "$env:LOCALAPPDATA\dotnet-sdk\dotnet.exe" build
 
-# 配布用ビルド（自己完結・単一exe。.NETランタイムのインストール不要で配布できる）
+# 配布用ビルド（自己完結。.NETランタイムのインストール不要で配布できる）
 & "$env:LOCALAPPDATA\dotnet-sdk\dotnet.exe" publish -c Release -r win-x64
-# 出力: desktop\bin\Release\net8.0-windows\win-x64\publish\GuestVoiceStudio.exe
+# 出力: desktop\bin\Release\net8.0-windows\win-x64\publish\ 一式（約800MB）
 ```
 
-`GuestVoiceStudio.exe` をコピーして配布し、ダブルクリックするだけで起動します
-（拠点PCへのインストーラー配布は §14 の運用方針どおり、休暇村協会側の配布プロセスを
-想定。この試作では単一exeの配布まで用意しています。要確認事項参照）。
+`publish\` フォルダ一式（`GuestVoiceStudio.exe` と `webapp\`、`webview2runtime\`）をまとめて
+配布します。**`GuestVoiceStudio.exe` 単体をコピーしても動きません**（`webapp\` と
+`webview2runtime\` が同じ場所に必要です）。フォルダごとZIPにする、またはそのままコピーして
+配布してください。WebView2ランタイムを同梱しているため、配布先PCでの追加インストールは
+一切不要です（拠点PCへの正式なインストーラー配布は §14 の運用方針どおり、休暇村協会側の
+配布プロセスを想定。この試作ではフォルダ一式の配布まで用意しています。要確認事項参照）。
 
 ## 動かしてみる
 
@@ -109,9 +118,11 @@ desktop/
 
 ## 既知の制限（正直に明記）
 
-- **WebView2ランタイム依存**：Windows 11は標準搭載ですが、Windows 10の一部環境では
-  Evergreen ランタイムの導入が必要な場合があります（管理者権限不要でインストール可能
-  ですが、実機未検証——要確認事項）。
+- **WebView2ランタイムは同梱済み（Fixed Version）**：配布先PCへの追加インストールは
+  不要です。実機テストで「WebView2ランタイムの初期化に失敗しました（0x80070003）」が
+  発生したため、システム側のランタイムに依存しない構成に変更しました
+  （`desktop/scripts/fetch_webview2_runtime.ps1` で取得し、`webview2runtime\` として
+  exeと同じフォルダに配布します）。そのぶん配布サイズは約800MBになります。
 - **形態素解析なし**：Web版と同様、簡易な語抽出ロジックです（`webapp/js/tokenizer.js`）。
 - **Outlook下書きの正確な起動可否は実機未検証**：クラシックOutlook／新しいOutlook／
   Windows Mailで挙動が異なる可能性があります（§11 要確認事項「Microsoft 365許可」）。

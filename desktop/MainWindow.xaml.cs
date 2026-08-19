@@ -39,10 +39,13 @@ public partial class MainWindow : Window
         catch (Exception ex)
         {
             LoadingOverlay.Visibility = Visibility.Visible;
+            var bundledExists = Directory.Exists(Path.Combine(AppContext.BaseDirectory, "webview2runtime"));
             MessageBox.Show(
-                "WebView2 ランタイムの初期化に失敗しました。\n" +
-                "Windows 11 には標準搭載されていますが、Windows 10 では Evergreen ランタイムの導入が必要な場合があります。\n\n" +
-                "詳細: " + ex.Message,
+                "WebView2 ランタイムの初期化に失敗しました。\n\n" +
+                (bundledExists
+                    ? "同梱ランタイム（webview2runtime フォルダ）を検出しましたが、読み込みに失敗しました。exeと同じ場所に webview2runtime フォルダが正しくコピーされているかご確認ください。"
+                    : "同梱ランタイム（webview2runtime フォルダ）が見つかりませんでした。exeと同じ場所に webview2runtime フォルダを配置してください（別配布のZIPをご利用の場合は展開後のフォルダ構成をご確認ください）。") +
+                "\n\n詳細: " + ex.Message,
                 "起動エラー", MessageBoxButton.OK, MessageBoxImage.Error);
         }
     }
@@ -58,7 +61,29 @@ public partial class MainWindow : Window
         var webViewUserData = Path.Combine(appRoot, "WebView2Data");
         Directory.CreateDirectory(webViewUserData);
 
-        var env = await CoreWebView2Environment.CreateAsync(userDataFolder: webViewUserData);
+        // Prefer the WebView2 Runtime bundled next to the exe (webview2runtime\)
+        // so the app never depends on a system-installed runtime — this is
+        // what fixes the "WebView2ランタイムの初期化に失敗しました" /
+        // 0x80070003 error on machines that don't already have Edge's
+        // Evergreen runtime present (common on locked-down Windows 10).
+        // Falls back to the system runtime if the bundled folder is missing
+        // (e.g. a debug build run without first running fetch_webview2_runtime.ps1).
+        var bundledRuntime = Path.Combine(AppContext.BaseDirectory, "webview2runtime");
+        string? browserExecutableFolder = Directory.Exists(bundledRuntime) && File.Exists(Path.Combine(bundledRuntime, "msedgewebview2.exe"))
+            ? bundledRuntime
+            : null;
+
+        CoreWebView2Environment env;
+        try
+        {
+            env = await CoreWebView2Environment.CreateAsync(browserExecutableFolder: browserExecutableFolder, userDataFolder: webViewUserData);
+        }
+        catch (Exception) when (browserExecutableFolder != null)
+        {
+            // Bundled runtime present but failed to load for some reason — retry
+            // against whatever system runtime might be available as a last resort.
+            env = await CoreWebView2Environment.CreateAsync(userDataFolder: webViewUserData);
+        }
         await Browser.EnsureCoreWebView2Async(env);
 
         var webAppDir = Path.Combine(AppContext.BaseDirectory, "webapp");
