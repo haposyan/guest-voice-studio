@@ -77,24 +77,48 @@ function seedStores() {
   return [{ id: LOCAL_STORE_ID, name: "", aliases: [], active: true, configured: false }];
 }
 
+// Column names match the actual 休暇村協会 アンケート CSV export exactly
+// (§8 要確認事項 — the original requirements doc's 5-category placeholder
+// list [接客対応/清潔さ/設備/対応スピード/総合満足度] did not match any real
+// column, so every row failed the store/date/rating lookups on import and
+// nothing ever reached analysis or the word cloud). Some real columns carry
+// a non-comment sibling field (予約経路, 夕食コース, プログラム — a select,
+// not free text) that is intentionally left unmapped.
 function seedItemMappings() {
   const defs = [
-    { key: "接客対応", category: "サービス" },
-    { key: "清潔さ", category: "施設" },
-    { key: "設備", category: "施設" },
-    { key: "対応スピード", category: "サービス" },
-    { key: "総合満足度", category: "総合" },
+    { name: "予約対応・予約のしやすさ", category: "予約", ratingCol: "予約対応・予約のしやすさにについて／評価", commentCol: "予約対応・予約のしやすさにについて／お気づきの点" },
+    { name: "接客・サービス（フロント）", category: "接客", ratingCol: "接客・サービスについて／フロント／評価", commentCol: "接客・サービスについて／フロント／お気づきの点" },
+    { name: "接客・サービス（レストラン）", category: "接客", ratingCol: "接客・サービスについて／レストラン／評価", commentCol: "接客・サービスについて／レストラン／お気づきの点" },
+    { name: "客室", category: "客室", ratingCol: "客室について／評価", commentCol: "客室について／お気づきの点" },
+    { name: "大浴場", category: "施設", ratingCol: "大浴場について／評価", commentCol: "大浴場について／お気づきの点" },
+    { name: "お食事（夕食）", category: "食事", ratingCol: "お食事について／夕食／評価", commentCol: "お食事について／夕食／お気づきの点" },
+    { name: "お食事（朝食）", category: "食事", ratingCol: "お食事について／朝食／評価", commentCol: "お食事について／朝食／お気づきの点" },
+    { name: "体験プログラム", category: "体験", ratingCol: "体験プログラム／評価", commentCol: "体験プログラム／お気づきの点" },
+    { name: "清潔感", category: "施設", ratingCol: "清潔感について／評価", commentCol: "清潔感について／お気づきの点" },
+    { name: "アメニティ", category: "施設", ratingCol: "アメニティについて／評価", commentCol: "アメニティについて／お気づきの点" },
+    { name: "総合的な印象", category: "総合", ratingCol: "総合的な印象／評価", commentCol: "総合的な印象／お気づきの点", favorite: true },
   ];
   return defs.map((d, i) => ({
     id: "it_" + String(i + 1).padStart(2, "0"),
-    name: d.key,
+    name: d.name,
     category: d.category,
-    ratingCol: `${d.key}_評価`,
-    commentCol: `${d.key}_コメント`,
+    ratingCol: d.ratingCol,
+    commentCol: d.commentCol,
     enabled: true,
-    favorite: i === 4,
+    favorite: !!d.favorite,
     sortOrder: i,
   }));
+}
+
+// Fingerprint of the old, never-matching default (§ above) so an install
+// that already ran init() before this fix can self-heal without wiping the
+// user's records/tasks/reports. Only fires when itemMappings is still
+// exactly the shipped-broken default — any manual edit in Settings changes
+// ids/columns and is left alone.
+const OLD_BROKEN_DEFAULT_RATING_COLS = ["接客対応_評価", "清潔さ_評価", "設備_評価", "対応スピード_評価", "総合満足度_評価"];
+function isUnmigratedBrokenDefault(mappings) {
+  return Array.isArray(mappings) && mappings.length === 5 &&
+    mappings.every((m, i) => m.ratingCol === OLD_BROKEN_DEFAULT_RATING_COLS[i]);
 }
 
 function seedExcludedWords() {
@@ -120,6 +144,7 @@ export const db = {
   init() {
     if (!localStorage.getItem(NS + KEYS.stores)) save(KEYS.stores, seedStores());
     if (!localStorage.getItem(NS + KEYS.itemMappings)) save(KEYS.itemMappings, seedItemMappings());
+    else if (isUnmigratedBrokenDefault(load(KEYS.itemMappings, []))) save(KEYS.itemMappings, seedItemMappings());
     if (!localStorage.getItem(NS + KEYS.records)) save(KEYS.records, []);
     if (!localStorage.getItem(NS + KEYS.importBatches)) save(KEYS.importBatches, []);
     if (!localStorage.getItem(NS + KEYS.excludedWords)) save(KEYS.excludedWords, seedExcludedWords());

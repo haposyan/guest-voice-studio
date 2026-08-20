@@ -62,12 +62,31 @@ export function parseCsv(text) {
     headers.forEach((h, idx) => { obj[h] = (r[idx] ?? "").trim(); });
     return obj;
   });
+  synthesizeDateColumn(headers, dataRows);
   return { headers, rows: dataRows };
 }
 
 const ID_HEADER_CANDIDATES = ["回答ID", "ID", "id", "response_id"];
 const DATE_HEADER_CANDIDATES = ["回答日", "日付", "date", "response_date"];
-const STORE_HEADER_CANDIDATES = ["拠点名", "拠点", "店舗名", "store", "store_name"];
+const STORE_HEADER_CANDIDATES = ["拠点名", "拠点", "店舗名", "休暇村", "store", "store_name"];
+const YEAR_HEADER = "年", MONTH_HEADER = "月", DAY_HEADER = "日";
+
+function pad2(n) { return String(n).padStart(2, "0"); }
+
+// The official 休暇村協会 アンケート CSV export has no single date column —
+// it splits the response date into separate 年/月/日 columns instead. When
+// no DATE_HEADER_CANDIDATES column is present but 年/月/日 all are,
+// synthesize a 回答日 column so buildPreview/importRows don't need to know
+// about this format's quirk.
+function synthesizeDateColumn(headers, dataRows) {
+  if (DATE_HEADER_CANDIDATES.some((c) => headers.includes(c))) return;
+  if (!headers.includes(YEAR_HEADER) || !headers.includes(MONTH_HEADER) || !headers.includes(DAY_HEADER)) return;
+  headers.push("回答日");
+  dataRows.forEach((r) => {
+    const y = r[YEAR_HEADER], m = r[MONTH_HEADER], d = r[DAY_HEADER];
+    r["回答日"] = (y && m && d) ? `${y}-${pad2(m)}-${pad2(d)}` : "";
+  });
+}
 
 // Columns matching this pattern are never imported (§7 個人情報: "分析に
 // 不要な氏名・電話・メール等の列は取り込まない"). importRows() already only
