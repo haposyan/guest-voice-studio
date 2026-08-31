@@ -7,6 +7,7 @@
         xmlns:local="clr-namespace:GuestVoiceStudio"
         mc:Ignorable="d"
         Title="お客様の声・改善管理 | Guest Voice Studio" Height="900" Width="1440"
+        Icon="Assets/app.ico"
         Background="#FAF6EE">
     <Grid>
         <wv2:WebView2 x:Name="Browser" />
@@ -26,14 +27,27 @@
         </Border>
 
         <!--
-          Zoom-level indicator: shown briefly when the user changes the
-          WebView2 zoom (Ctrl+MouseWheel / Ctrl+ +/-), then auto-hidden after
-          a couple of seconds (see ZoomIndicatorTimer in MainWindow.xaml.cs).
+          Always-visible zoom control (－ / 100% / ＋), bottom-right. Ctrl+
+          MouseWheel and Ctrl+ +/- still work (WebView2's own gesture), but
+          feedback was that not everyone knows those shortcuts exist — this
+          gives every user a way to zoom without needing to know them. The
+          percentage label also stays in sync when zoom changes via the
+          keyboard/wheel gesture instead of these buttons (see the polling
+          timer in MainWindow.xaml.cs).
         -->
-        <Border x:Name="ZoomIndicator" Background="#17324D" CornerRadius="8" Padding="14,8"
-                HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,20,20"
-                Opacity="0" Visibility="Collapsed" IsHitTestVisible="False">
-            <TextBlock x:Name="ZoomIndicatorText" Text="100%" FontSize="16" FontWeight="Bold" Foreground="White"/>
+        <Border Background="#17324D" CornerRadius="8" Padding="4"
+                HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,20,20" Opacity="0.92">
+            <StackPanel Orientation="Horizontal">
+                <Button x:Name="ZoomOutBtn" Content="－" Width="30" Height="26" FontSize="14" FontWeight="Bold"
+                        Background="Transparent" Foreground="White" BorderThickness="0" Cursor="Hand" ToolTip="縮小"/>
+                <Button x:Name="ZoomResetBtn" Width="56" Height="26" FontSize="13" FontWeight="Bold"
+                        Background="Transparent" Foreground="White" BorderThickness="0" Cursor="Hand"
+                        ToolTip="クリックで100%に戻す" Margin="2,0">
+                    <TextBlock x:Name="ZoomIndicatorText" Text="100%"/>
+                </Button>
+                <Button x:Name="ZoomInBtn" Content="＋" Width="30" Height="26" FontSize="14" FontWeight="Bold"
+                        Background="Transparent" Foreground="White" BorderThickness="0" Cursor="Hand" ToolTip="拡大"/>
+            </StackPanel>
         </Border>
     </Grid>
 </Window>

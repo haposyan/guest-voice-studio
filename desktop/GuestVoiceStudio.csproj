@@ -21,6 +21,10 @@
       webapp\ + webview2runtime\) so single-file packing bought nothing here.
     -->
     <InvariantGlobalization>false</InvariantGlobalization>
+    <!-- exe/taskbar/Alt-Tab icon — the hammock mark cropped from the official
+         休暇村 logo (Assets/logo.png), replacing the default WPF icon that
+         real-machine feedback called "無機質" (bland/generic). -->
+    <ApplicationIcon>Assets\app.ico</ApplicationIcon>
   </PropertyGroup>
 
   <ItemGroup>
@@ -30,6 +34,9 @@
   <ItemGroup>
     <!-- Official 休暇村 wordmark, used on the startup splash (MainWindow.xaml). -->
     <Resource Include="Assets\logo.png" />
+    <!-- Same file as ApplicationIcon above, also exposed as a WPF pack
+         resource so MainWindow.xaml can set Window.Icon (title bar) to it. -->
+    <Resource Include="Assets\app.ico" />
   </ItemGroup>
 
   <ItemGroup>

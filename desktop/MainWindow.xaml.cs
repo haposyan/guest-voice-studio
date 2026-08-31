@@ -24,6 +24,13 @@ namespace GuestVoiceStudio;
 /// </summary>
 public partial class MainWindow : Window
 {
+    // Bump this with every release. Shown in Settings＞ブランド・保存設定
+    // ("このツールについて") so a tester can tell at a glance whether they're
+    // actually running the build they think they extracted — real-machine
+    // feedback repeatedly turned out to be re-testing a stale exe via an old
+    // desktop shortcut (see RefreshDesktopShortcutTarget).
+    private const string AppVersion = "2.4.0";
+
     private string _dataDir = "";
     // Startup splash must stay up at least this long — the app loads so fast
     // on modern hardware that it used to flash and disappear before the user
@@ -31,9 +38,9 @@ public partial class MainWindow : Window
     // that read as "too fast"; bumped to 3s.)
     private static readonly TimeSpan MinSplashDuration = TimeSpan.FromSeconds(3);
     private readonly Stopwatch _splashStopwatch = Stopwatch.StartNew();
-    private DispatcherTimer? _zoomIndicatorTimer;
     private DispatcherTimer? _zoomPollTimer;
     private double _lastKnownZoomFactor = 1.0;
+    private static readonly double[] ZoomSteps = { 0.5, 0.67, 0.8, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0 };
 
     public MainWindow()
     {
@@ -46,6 +53,7 @@ public partial class MainWindow : Window
         try
         {
             CreateDesktopShortcutIfMissing(this);
+            RefreshDesktopShortcutTarget();
             await InitializeWebViewAsync();
         }
         catch (Exception ex)
@@ -107,7 +115,7 @@ public partial class MainWindow : Window
             dataDir = _dataDir,
             reportsDir = Path.Combine(_dataDir, "Reports"),
             backupsDir = Path.Combine(_dataDir, "Backups"),
-            appVersion = "1.0.0-local",
+            appVersion = AppVersion,
             windowsUserName = Environment.UserName,
         });
         await Browser.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(
@@ -125,41 +133,61 @@ public partial class MainWindow : Window
         Browser.CoreWebView2.Settings.AreDefaultContextMenusEnabled = true;
         Browser.CoreWebView2.Settings.AreDevToolsEnabled = true; // left on to support field troubleshooting
 
-        // Ctrl+マウスホイール／Ctrl+ +/- でのズーム操作に対して、現在の倍率(%)を
-        // 右下に数秒間だけ表示する（何%か分からない、という実機フィードバック対応）。
-        // WPF WebView2の ZoomFactorChanged イベントはCtrl+ホイールでのユーザー
-        // 操作では発火しないことがあるため、ZoomFactor を短間隔でポーリングして
-        // 変化を検知する（多少の遅延は数秒表示という要件上まったく問題にならない）。
+        // 常時表示の拡大縮小ボタン（－/100%/＋）を配線する。Ctrl+ホイールや
+        // Ctrl+ +/- でズームした場合でも表示している%が追従するよう、
+        // ZoomFactor を短間隔でポーリングしてラベルを更新する（ボタン操作
+        // だけに頼らない — 実機フィードバックで「そもそもCtrl+ホイールを
+        // 知らない人がいる」との指摘があったため、ボタンを常設した）。
         _lastKnownZoomFactor = Browser.ZoomFactor;
+        UpdateZoomLabel(_lastKnownZoomFactor);
         _zoomPollTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(200) };
         _zoomPollTimer.Tick += (_, _) =>
         {
             var current = Browser.ZoomFactor;
             if (Math.Abs(current - _lastKnownZoomFactor) < 0.001) return;
             _lastKnownZoomFactor = current;
-            ShowZoomIndicator(current);
+            UpdateZoomLabel(current);
         };
         _zoomPollTimer.Start();
+
+        ZoomInBtn.Click += (_, _) => StepZoom(1);
+        ZoomOutBtn.Click += (_, _) => StepZoom(-1);
+        ZoomResetBtn.Click += (_, _) => SetZoom(1.0);
 
         Browser.CoreWebView2.Navigate("https://appassets.local/index.html");
     }
 
-    private void ShowZoomIndicator(double zoomFactor)
+    private void StepZoom(int direction)
     {
-        var percent = (int)Math.Round(zoomFactor * 100);
-        ZoomIndicatorText.Text = $"{percent}%";
-        ZoomIndicator.Visibility = Visibility.Visible;
-        ZoomIndicator.Opacity = 1;
-
-        _zoomIndicatorTimer?.Stop();
-        _zoomIndicatorTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
-        _zoomIndicatorTimer.Tick += (_, _) =>
+        var current = Browser.ZoomFactor;
+        var idx = Array.FindIndex(ZoomSteps, s => Math.Abs(s - current) < 0.01);
+        int nextIdx;
+        if (idx < 0)
         {
-            _zoomIndicatorTimer!.Stop();
-            ZoomIndicator.Opacity = 0;
-            ZoomIndicator.Visibility = Visibility.Collapsed;
-        };
-        _zoomIndicatorTimer.Start();
+            // Not sitting exactly on a step (e.g. zoomed via Ctrl+wheel) —
+            // jump to the nearest step in the requested direction.
+            nextIdx = direction > 0
+                ? Array.FindIndex(ZoomSteps, s => s > current)
+                : Array.FindLastIndex(ZoomSteps, s => s < current);
+            if (nextIdx < 0) nextIdx = direction > 0 ? ZoomSteps.Length - 1 : 0;
+        }
+        else
+        {
+            nextIdx = Math.Clamp(idx + direction, 0, ZoomSteps.Length - 1);
+        }
+        SetZoom(ZoomSteps[nextIdx]);
+    }
+
+    private void SetZoom(double factor)
+    {
+        Browser.ZoomFactor = factor;
+        _lastKnownZoomFactor = factor;
+        UpdateZoomLabel(factor);
+    }
+
+    private void UpdateZoomLabel(double zoomFactor)
+    {
+        ZoomIndicatorText.Text = $"{(int)Math.Round(zoomFactor * 100)}%";
     }
 
     /// <summary>
@@ -248,6 +276,48 @@ public partial class MainWindow : Window
         catch
         {
             // Best-effort only — a missing shortcut is not fatal, the exe still works directly.
+        }
+    }
+
+    /// <summary>
+    /// Unconditionally rewrites the existing Desktop shortcut's target to
+    /// point at THIS exe, every launch. Cheap (a few ms), and safe to run
+    /// even if the user declined the shortcut originally (no-ops when the
+    /// .lnk doesn't exist).
+    ///
+    /// Why this exists: each release is unzipped to a NEW differently-named
+    /// folder (GuestVoiceStudio-vX.Y.Z-win-x64). A shortcut created once,
+    /// early on, keeps pointing at that old folder's exe forever — so after
+    /// extracting a newer version to a new folder and deleting the old one,
+    /// double-clicking the (now-broken, or worse, still-working-because-the
+    /// -old-folder-wasn't-deleted-yet) old shortcut silently keeps running
+    /// old code. Several "still not fixed" reports turned out to be exactly
+    /// this. Now the shortcut self-heals to the currently-running exe on
+    /// every launch, so as long as it was launched at least once from the
+    /// new folder, the shortcut is corrected from then on.
+    /// </summary>
+    private static void RefreshDesktopShortcutTarget()
+    {
+        try
+        {
+            var desktopDir = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
+            var shortcutPath = Path.Combine(desktopDir, "Guest Voice Studio.lnk");
+            if (!File.Exists(shortcutPath)) return;
+
+            var exePath = Environment.ProcessPath ?? Path.Combine(AppContext.BaseDirectory, "GuestVoiceStudio.exe");
+            dynamic shell = Activator.CreateInstance(Type.GetTypeFromProgID("WScript.Shell")!)!;
+            var shortcut = shell.CreateShortcut(shortcutPath);
+            if (string.Equals((string)shortcut.TargetPath, exePath, StringComparison.OrdinalIgnoreCase)) return;
+
+            shortcut.TargetPath = exePath;
+            shortcut.WorkingDirectory = Path.GetDirectoryName(exePath);
+            shortcut.IconLocation = exePath + ",0";
+            shortcut.Description = "お客様の声・改善管理（Guest Voice Studio）";
+            shortcut.Save();
+        }
+        catch
+        {
+            // Best-effort — worst case the shortcut stays stale until next launch.
         }
     }
 
@@ -590,20 +660,33 @@ public partial class MainWindow : Window
     /// Outlook classic isn't installed (e.g. "new Outlook"-only machines),
     /// in which case the caller falls back to opening an .eml by file
     /// association.
+    ///
+    /// Checks BOTH the 64-bit and 32-bit registry views explicitly: this app
+    /// is built win-x64, and a 64-bit process reading
+    /// HKLM\SOFTWARE\...\App Paths does NOT get redirected to
+    /// WOW6432Node — so on the (still very common) machines where Office/
+    /// Outlook is installed as 32-bit, the plain OpenSubKey lookup used
+    /// before this fix silently found nothing and always fell back to the
+    /// (often unreliable) .eml file-association path.
     /// </summary>
     private static string? FindOutlookClassicExePath()
     {
-        try
+        const string subKey = @"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\OUTLOOK.EXE";
+        foreach (var view in new[] { RegistryView.Registry64, RegistryView.Registry32 })
         {
-            using var key = Registry.LocalMachine.OpenSubKey(
-                @"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\OUTLOOK.EXE");
-            var path = key?.GetValue(null) as string;
-            return !string.IsNullOrWhiteSpace(path) && File.Exists(path) ? path : null;
+            try
+            {
+                using var baseKey = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, view);
+                using var key = baseKey.OpenSubKey(subKey);
+                var path = key?.GetValue(null) as string;
+                if (!string.IsNullOrWhiteSpace(path) && File.Exists(path)) return path;
+            }
+            catch
+            {
+                // try the other view
+            }
         }
-        catch
-        {
-            return null;
-        }
+        return null;
     }
 
     private void Reply(string? requestId, object payload)

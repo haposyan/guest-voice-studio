@@ -385,9 +385,11 @@ function renderBrand(panel) {
     <div class="card">
       <div class="card-title"><h3>このツールについて</h3></div>
       <div class="field-row">
+        <div class="field"><label>バージョン</label><div>${escapeHtml(nativeInfo.appVersion || "-")}</div></div>
         <div class="field"><label>製作日</label><div>2026年8月20日</div></div>
         <div class="field"><label>製作者</label><div>大籠義記</div></div>
       </div>
+      <p class="hint">アップデート・修正のたびにバージョン番号が上がります。動作確認の際は、お使いのビルドがこの番号と一致しているかご確認ください（一致しない場合は、デスクトップショートカットが古いバージョンを指している可能性があります。ショートカットを一度削除し、最新版のexeを直接実行し直すと直ります）。</p>
       <p class="hint">仕様書・使い方の概要は別途お渡ししている資料をご参照ください。</p>
     </div>
     <div class="card">

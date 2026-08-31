@@ -7,7 +7,7 @@
 
 export const isDesktop = !!(window.__NATIVE__ && window.__NATIVE__.isDesktop && window.chrome?.webview);
 
-export const nativeInfo = window.__NATIVE__ || { isDesktop: false, dataDir: null, reportsDir: null, backupsDir: null };
+export const nativeInfo = window.__NATIVE__ || { isDesktop: false, dataDir: null, reportsDir: null, backupsDir: null, appVersion: "browser-dev" };
 
 const pending = new Map();
 let reqCounter = 0;
