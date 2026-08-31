@@ -68,6 +68,13 @@ button, input, select, textarea { font-family: inherit; font-size: inherit; }
   display: flex;
   flex-direction: column;
   gap: 4px;
+  /* Fixed while the content column scrolls (long pages no longer drag
+     Lobby/Guest Voice nav off-screen with them). */
+  position: sticky;
+  top: 0;
+  align-self: flex-start;
+  height: 100vh;
+  overflow-y: auto;
 }
 
 .brand {
@@ -230,6 +237,15 @@ tbody tr:hover { background: var(--ivory-2); }
 .wc-word.positive { color: var(--good); }
 .wc-word.neutral { color: var(--info); }
 .wc-word .wc-override-mark { font-size: .6em; margin-left: 2px; opacity: .7; }
+
+/* Right-hand ranking table: no hover color-swap cue (list is read-only at a
+   glance — feedback was that the hover highlight read as "selectable" and
+   was distracting). Still clickable to open source comments. */
+.wc-ranking .wc-word { cursor: default; }
+.wc-ranking .wc-word:hover { color: inherit; transform: none; }
+.wc-ranking .wc-word.negative:hover { color: var(--bad); }
+.wc-ranking .wc-word.positive:hover { color: var(--good); }
+.wc-ranking .wc-word.neutral:hover { color: var(--info); }
 .wc-legend { display:flex; gap:16px; align-items:center; padding: 4px 2px 12px; flex-wrap: wrap; }
 .wc-legend-item { display:inline-flex; align-items:center; gap:6px; font-size:.78rem; color: var(--ink-soft); }
 .wc-swatch { width:11px; height:11px; border-radius:50%; display:inline-block; }

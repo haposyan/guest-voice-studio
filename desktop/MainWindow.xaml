@@ -24,5 +24,16 @@
                 <TextBlock Text="起動しています…" FontSize="12" Foreground="#6B6455" Margin="0,14,0,0" HorizontalAlignment="Center"/>
             </StackPanel>
         </Border>
+
+        <!--
+          Zoom-level indicator: shown briefly when the user changes the
+          WebView2 zoom (Ctrl+MouseWheel / Ctrl+ +/-), then auto-hidden after
+          a couple of seconds (see ZoomIndicatorTimer in MainWindow.xaml.cs).
+        -->
+        <Border x:Name="ZoomIndicator" Background="#17324D" CornerRadius="8" Padding="14,8"
+                HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,20,20"
+                Opacity="0" Visibility="Collapsed" IsHitTestVisible="False">
+            <TextBlock x:Name="ZoomIndicatorText" Text="100%" FontSize="16" FontWeight="Bold" Foreground="White"/>
+        </Border>
     </Grid>
 </Window>

@@ -12,6 +12,7 @@ import { computeWordFrequencies } from "../tokenizer.js";
 import { renderWordCloud, renderWordRanking, renderSentimentLegend } from "../components/wordcloud.js";
 import { ratingDistributionChart } from "../components/charts.js";
 import { openModal, closeModal, escapeHtml, toast } from "../components/ui.js";
+import { downloadBlob } from "../native.js";
 
 let filters;
 let editMode = false;
@@ -62,8 +63,8 @@ function render(root) {
               <button data-period="custom" class="${filters.periodKey === "custom" ? "active" : ""}">カスタム</button>
             </div>
           </div>
-          <div class="field"><label>開始日</label><input type="date" id="startDate" value="${filters.start || ""}"></div>
-          <div class="field"><label>終了日</label><input type="date" id="endDate" value="${filters.end || ""}"></div>
+          <div class="field"><label>開始日</label><input type="date" id="startDate" value="${filters.start || ""}" ${filters.periodKey !== "custom" ? "disabled" : ""}></div>
+          <div class="field"><label>終了日</label><input type="date" id="endDate" value="${filters.end || ""}" ${filters.periodKey !== "custom" ? "disabled" : ""}></div>
         </div>
         <div>
           <label>項目</label>
@@ -92,9 +93,9 @@ function render(root) {
     <div class="grid cols-5">
       <div class="stat-tile"><div class="label">回答数</div><div class="value">${metrics.responseCount}<span class="unit">件</span></div></div>
       <div class="stat-tile"><div class="label">コメント数</div><div class="value">${metrics.commentCount}<span class="unit">件</span></div></div>
-      <div class="stat-tile"><div class="label">コメント記入率</div><div class="value">${metrics.fillRate}<span class="unit">%</span></div></div>
-      <div class="stat-tile"><div class="label">平均評価</div><div class="value">${metrics.avg ?? "-"}<span class="unit">/ 中央値 ${metrics.median ?? "-"}</span></div></div>
-      <div class="stat-tile"><div class="label">低評価率</div><div class="value" style="color:${metrics.lowRate > 20 ? "var(--bad)" : "var(--navy)"}">${metrics.lowRate ?? "-"}<span class="unit">%</span></div></div>
+      <div class="stat-tile"><div class="label">コメント記入率</div><div class="value">${metrics.fillRate}<span class="unit">%</span></div><div class="muted" style="font-size:.68rem;margin-top:2px">※評価かコメントが入った項目のうち、コメントも入力された割合</div></div>
+      <div class="stat-tile"><div class="label">全項目平均評価</div><div class="value">${metrics.avg ?? "-"}<span class="unit">/ 中央値 ${metrics.median ?? "-"}</span></div></div>
+      <div class="stat-tile"><div class="label">低評価率</div><div class="value" style="color:${metrics.lowRate > 20 ? "var(--bad)" : "var(--navy)"}">${metrics.lowRate ?? "-"}<span class="unit">%</span></div><div class="muted" style="font-size:.68rem;margin-top:2px">※全体のうち2以下の評価率</div></div>
     </div>
 
     <div class="grid cols-2">
@@ -104,6 +105,7 @@ function render(root) {
       </div>
       <div class="card">
         <div class="card-title"><h3>項目別サマリー</h3></div>
+        <p class="muted" style="font-size:.76rem;margin:-4px 0 8px">※低評価率・記入率の定義は上部の指標と共通です。</p>
         <div class="table-wrap"><table><thead><tr><th>項目</th><th>回答数</th><th>平均</th><th>低評価率</th><th>記入率</th></tr></thead><tbody>
           ${breakdown.map((b) => `<tr><td>${escapeHtml(b.item.name)}</td><td>${b.metrics.responseCount}</td><td>${b.metrics.avg ?? "-"}</td><td>${b.metrics.lowRate ?? "-"}%</td><td>${b.metrics.fillRate}%</td></tr>`).join("")}
         </tbody></table></div>
@@ -197,12 +199,22 @@ function wireFilters(root) {
   root.querySelector("#endDate").onchange = (e) => { filters.periodKey = "custom"; filters.end = e.target.value; render(root); };
 }
 
+function commentsToCsv(word, matches) {
+  const esc = (v) => { const s = String(v ?? ""); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
+  const header = ["日付", "評価", "項目", "コメント"].join(",");
+  const lines = matches.map((m) => [m.date, m.rating ?? "", db.itemById(m.itemId)?.name || "", m.comment].map(esc).join(","));
+  return "﻿" + [header, ...lines].join("\r\n"); // BOM付きUTF-8: Excelで開いた時に文字化けしないように
+}
+
 function showCommentsForWord(word, allRecords, words) {
   const entry = words.find((w) => w.word === word);
   if (!entry) return;
   const matches = allRecords.filter((r) => entry.recordIds.includes(r.id));
   openModal(`
     <div class="modal-header"><h3>「${escapeHtml(word)}」を含む元コメント（${matches.length}件）</h3><button data-close>&times;</button></div>
+    <div class="row" style="justify-content:flex-end;margin-bottom:10px">
+      <button class="btn small" id="exportWordCsv" ${matches.length ? "" : "disabled"}>Excelで出力（CSV）</button>
+    </div>
     <div class="stack">
       ${matches.map((m) => `
         <div class="comment-item">
@@ -215,5 +227,13 @@ function showCommentsForWord(word, allRecords, words) {
         </div>
       `).join("") || `<div class="empty-state">該当コメントがありません</div>`}
     </div>
-  `, { width: 640, onMount: (r) => { r.querySelector("[data-close]").onclick = closeModal; } });
+  `, { width: 640, onMount: (r) => {
+    r.querySelector("[data-close]").onclick = closeModal;
+    const btn = r.querySelector("#exportWordCsv");
+    if (btn) btn.onclick = () => {
+      const csv = commentsToCsv(word, matches);
+      downloadBlob(`コメント一覧_${word}.csv`, new Blob([csv], { type: "text/csv" }));
+      toast("CSVを出力しました（Excelで開けます）", "good");
+    };
+  } });
 }

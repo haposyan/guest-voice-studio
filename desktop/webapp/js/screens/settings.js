@@ -8,16 +8,15 @@
 // pick — there's only the local store).
 // ============================================================================
 
-import { db } from "../db.js";
+import { db, DATA_RETENTION_DAYS } from "../db.js";
 import { escapeHtml, toast, confirmDialog, openModal, closeModal } from "../components/ui.js";
-import { isDesktop, nativeInfo, revealInExplorer, pickSaveFile, pickOpenFile, writeFileBytes, readFileBytes, textToBase64, downloadBlob } from "../native.js";
+import { isDesktop, nativeInfo, revealInExplorer, pickSaveFile, pickOpenFile, writeFileBytes, readFileBytes, textToBase64, downloadBlob, requestUninstall } from "../native.js";
 import { encryptBackup, decryptBackup } from "../backup.js";
 
 const TABS = [
-  { key: "store", label: "拠点情報" },
+  { key: "store", label: "基本情報" },
   { key: "items", label: "項目マッピング" },
   { key: "words", label: "除外語" },
-  { key: "recipients", label: "報告先" },
   { key: "backup", label: "バックアップ" },
   { key: "brand", label: "ブランド・保存設定" },
 ];
@@ -41,47 +40,72 @@ function render(root) {
   `;
   root.querySelectorAll("[data-tab]").forEach((b) => b.onclick = () => { activeTab = b.dataset.tab; render(root); });
   const panel = root.querySelector("#panel");
-  ({ store: renderStore, items: renderItems, words: renderWords, recipients: renderRecipients, backup: renderBackup, brand: renderBrand })[activeTab](panel, root);
+  ({ store: renderStore, items: renderItems, words: renderWords, backup: renderBackup, brand: renderBrand })[activeTab](panel, root);
 }
 
 // ---------------------------------------------------------------------------
 function renderStore(panel, root) {
   const s = db.localStore;
+  const authors = db.brand.reportAuthors || [];
   panel.innerHTML = `
     <div class="card">
-      <div class="card-title"><h3>拠点情報</h3></div>
-      <p class="hint">このインストールが担当する拠点は1つだけです（本部/他拠点機能はv2で廃止）。CSV内の拠点名表記ゆれは「別名」に登録すると自動的に対応付けられます（MAP-04）。</p>
-      <div class="field"><label>拠点名</label><input type="text" id="sName" value="${escapeHtml(s.name)}"></div>
+      <div class="card-title"><h3>基本情報</h3></div>
+      <p class="hint">このインストールが担当する村は1つだけです（本部/他拠点機能はv2で廃止）。CSV内の村名表記ゆれは「別名」に登録すると自動的に対応付けられます（MAP-04）。</p>
+      <div class="field"><label>村名</label><input type="text" id="sName" value="${escapeHtml(s.name)}"></div>
       <div class="field"><label>別名（表記ゆれ、カンマ区切り）</label><input type="text" id="sAliases" value="${escapeHtml((s.aliases||[]).join(", "))}"></div>
       <button class="btn small primary" id="saveStore">保存</button>
+    </div>
+    <div class="card">
+      <div class="card-title"><h3>報告者</h3></div>
+      <p class="hint">Report Studioの「報告者」プルダウンに表示される候補です。複数名登録できます。</p>
+      <div class="tag-list" id="authorList">
+        ${authors.map((a) => `<span class="chip">${escapeHtml(a)} <button data-rm-author="${escapeHtml(a)}">&times;</button></span>`).join("") || `<span class="hint">未登録（現在の利用者名のみ選択できます）</span>`}
+      </div>
+      <div class="field-row" style="margin-top:10px">
+        <div class="field"><input type="text" id="newAuthor" placeholder="報告者名を入力"></div>
+        <button class="btn small" id="addAuthor">追加</button>
+      </div>
     </div>
   `;
   panel.querySelector("#saveStore").onclick = () => {
     const name = panel.querySelector("#sName").value.trim();
-    if (!name) { toast("拠点名を入力してください", "bad"); return; }
+    if (!name) { toast("村名を入力してください", "bad"); return; }
     const aliases = panel.querySelector("#sAliases").value.split(",").map((a) => a.trim()).filter(Boolean);
     db.stores = db.stores.map((st) => st.id === db.LOCAL_STORE_ID ? { ...st, name, aliases } : st);
     db.audit("settings_store_update", db.LOCAL_STORE_ID, name);
     toast("保存しました", "good");
     render(root);
   };
+  panel.querySelectorAll("[data-rm-author]").forEach((b) => b.onclick = () => {
+    db.brand = { ...db.brand, reportAuthors: (db.brand.reportAuthors || []).filter((a) => a !== b.dataset.rmAuthor) };
+    render(root);
+  });
+  panel.querySelector("#addAuthor").onclick = () => {
+    const v = panel.querySelector("#newAuthor").value.trim();
+    if (!v) return;
+    const list = db.brand.reportAuthors || [];
+    if (!list.includes(v)) db.brand = { ...db.brand, reportAuthors: [...list, v] };
+    render(root);
+  };
 }
 
 // ---------------------------------------------------------------------------
 function renderItems(panel, root) {
-  const items = db.itemMappings;
+  const allItems = db.itemMappings;
+  const items = allItems.filter((i) => i.enabled);
+  const hiddenCount = allItems.length - items.length;
   panel.innerHTML = `
     <div class="card">
       <div class="card-title"><h3>項目マッピング（${items.length}項目）</h3><button class="btn small primary" id="addItem">＋ 項目を追加</button></div>
       <p class="hint">評価列・コメント列の組をここで定義します。CSVの列名を変更しても、ここを更新するだけで対応できます（アプリ改修不要／MAP-01,02）。</p>
-      <div class="table-wrap"><table><thead><tr><th>項目名</th><th>カテゴリー</th><th>評価列名</th><th>コメント列名</th><th>有効</th><th>お気に入り</th><th></th></tr></thead><tbody>
+      ${hiddenCount ? `<p class="hint">無効化した項目が${hiddenCount}件あります（このリストには表示されません）。</p>` : ""}
+      <div class="table-wrap"><table><thead><tr><th>項目名</th><th>カテゴリー</th><th>評価列名</th><th>コメント列名</th><th>有効</th><th></th></tr></thead><tbody>
         ${items.map((i) => `<tr>
           <td><input type="text" data-f="name" data-id="${i.id}" value="${escapeHtml(i.name)}"></td>
           <td><input type="text" data-f="category" data-id="${i.id}" value="${escapeHtml(i.category)}"></td>
           <td><input type="text" data-f="ratingCol" data-id="${i.id}" value="${escapeHtml(i.ratingCol)}"></td>
           <td><input type="text" data-f="commentCol" data-id="${i.id}" value="${escapeHtml(i.commentCol)}"></td>
           <td><input type="checkbox" data-f="enabled" data-id="${i.id}" ${i.enabled ? "checked" : ""}></td>
-          <td><input type="checkbox" data-f="favorite" data-id="${i.id}" ${i.favorite ? "checked" : ""}></td>
           <td><button class="btn small" data-save="${i.id}">保存</button> <button class="btn small danger" data-del="${i.id}">削除</button></td>
         </tr>`).join("")}
       </tbody></table></div>
@@ -107,7 +131,6 @@ function renderItems(panel, root) {
         ratingCol: get("ratingCol").value.trim(),
         commentCol: get("commentCol").value.trim(),
         enabled: get("enabled").checked,
-        favorite: get("favorite").checked,
       } : i);
       db.itemMappings = list;
       db.audit("settings_item_update", id, "");
@@ -210,72 +233,19 @@ function renderWords(panel, root) {
 }
 
 // ---------------------------------------------------------------------------
-function renderRecipients(panel, root) {
-  const recipients = db.recipients;
-  panel.innerHTML = `
-    <div class="card">
-      <div class="card-title"><h3>報告先（MAIL-01）</h3><button class="btn small primary" id="addRcp">＋ 報告先を追加</button></div>
-      <div class="table-wrap"><table><thead><tr><th>氏名</th><th>宛先</th><th>CC</th><th></th></tr></thead><tbody>
-        ${recipients.map((r) => `<tr>
-          <td>${escapeHtml(r.name)}</td><td>${escapeHtml(r.email)}</td><td>${escapeHtml(r.cc||"")}</td>
-          <td><button class="btn small" data-edit="${r.id}">編集</button> <button class="btn small danger" data-del="${r.id}">削除</button></td>
-        </tr>`).join("") || `<tr><td colspan="4" class="empty-state">登録がありません</td></tr>`}
-      </tbody></table></div>
-    </div>
-  `;
-  panel.querySelector("#addRcp").onclick = () => openRecipientForm(root);
-  panel.querySelectorAll("[data-edit]").forEach((b) => b.onclick = () => openRecipientForm(root, db.recipients.find((r) => r.id === b.dataset.edit)));
-  panel.querySelectorAll("[data-del]").forEach((b) => b.onclick = () => confirmDialog("この報告先を削除しますか？", () => {
-    db.recipients = db.recipients.filter((r) => r.id !== b.dataset.del);
-    db.audit("settings_recipient_delete", b.dataset.del, "");
-    render(root);
-  }, { danger: true, okLabel: "削除する" }));
-}
-
-function openRecipientForm(root, existing) {
-  openModal(`
-    <div class="modal-header"><h3>${existing ? "報告先を編集" : "報告先を追加"}</h3><button data-close>&times;</button></div>
-    <div class="field"><label>氏名</label><input type="text" id="rName" value="${escapeHtml(existing?.name||"")}"></div>
-    <div class="field-row">
-      <div class="field"><label>宛先メール</label><input type="text" id="rEmail" value="${escapeHtml(existing?.email||"")}"></div>
-      <div class="field"><label>CC</label><input type="text" id="rCc" value="${escapeHtml(existing?.cc||"")}"></div>
-    </div>
-    <div class="field"><label>件名テンプレート（{{store}} {{period}} 使用可）</label><input type="text" id="rSubject" value="${escapeHtml(existing?.subjectTemplate||"【{{store}}】お客様の声 月次報告（{{period}}）")}"></div>
-    <div class="field"><label>本文テンプレート（{{store}} {{period}} {{author}} 使用可）</label><textarea id="rBody" rows="5">${escapeHtml(existing?.bodyTemplate||"いつもお世話になっております。\n{{store}}の{{period}}分レポートを添付いたします。\n\n{{author}}")}</textarea></div>
-    <div class="row" style="justify-content:flex-end"><button class="btn ghost" data-cancel>キャンセル</button><button class="btn primary" id="saveRcp">保存</button></div>
-  `, { width: 560, onMount: (r) => {
-    r.querySelector("[data-close]").onclick = closeModal;
-    r.querySelector("[data-cancel]").onclick = closeModal;
-    r.querySelector("#saveRcp").onclick = () => {
-      const rec = {
-        id: existing?.id || db.uid("rcp"),
-        name: r.querySelector("#rName").value.trim(),
-        email: r.querySelector("#rEmail").value.trim(),
-        cc: r.querySelector("#rCc").value.trim(),
-        storeIds: [db.LOCAL_STORE_ID],
-        subjectTemplate: r.querySelector("#rSubject").value,
-        bodyTemplate: r.querySelector("#rBody").value,
-      };
-      const list = db.recipients;
-      const idx = list.findIndex((x) => x.id === rec.id);
-      if (idx >= 0) list[idx] = rec; else list.push(rec);
-      db.recipients = list;
-      db.audit(existing ? "settings_recipient_update" : "settings_recipient_create", rec.id, rec.name);
-      toast("保存しました", "good");
-      closeModal();
-      render(document.getElementById("content"));
-    };
-  }});
-}
-
+// 報告先タブは廃止（v2.2）：Report StudioのOutlook送信は宛先を空欄のまま
+// 既定メールソフトを開く方式に変更したため、宛先の事前登録・テンプレート
+// 管理は不要になった。db.recipients のデータ自体は互換のため残してある。
 // ---------------------------------------------------------------------------
 function renderBackup(panel) {
   panel.innerHTML = `
     <div class="card">
       <div class="card-title"><h3>バックアップを作成</h3></div>
       <p class="hint">全データ（回答・改善課題・設定など）をパスフレーズで暗号化した1ファイルに書き出します。別PCへ移す場合はこのファイルを使ってください（§7 バックアップ）。</p>
-      <div class="field"><label>パスフレーズ</label><input type="password" id="bkPass1" placeholder="8文字以上を推奨"></div>
+      ${isDesktop ? `<div class="path-box" style="margin-bottom:10px"><span>既定の保存候補フォルダ: ${escapeHtml(nativeInfo.backupsDir || "")}</span><span class="spacer"></span><button class="btn small" id="openBackupsDir">エクスプローラーで開く</button></div>` : ""}
+      <div class="field"><label>パスフレーズ</label><input type="password" id="bkPass1" placeholder="8文字以上"></div>
       <div class="field"><label>パスフレーズ（確認）</label><input type="password" id="bkPass2"></div>
+      <p class="hint">※パスフレーズは<strong>8文字以上</strong>で設定してください。8文字未満は作成できません。上限はありません。復元時も同じパスフレーズが必要です。</p>
       <button class="btn primary" id="bkExport">バックアップを作成</button>
       <div id="bkExportResult"></div>
     </div>
@@ -290,9 +260,12 @@ function renderBackup(panel) {
         ${!isDesktop ? `<input type="file" id="bkFileInput" accept=".gvsbackup,.json" style="margin-top:6px">` : ""}
       </div>
       <div class="field"><label>パスフレーズ</label><input type="password" id="bkRestorePass"></div>
+      <p class="hint">※作成時に設定した8文字以上のパスフレーズをそのまま入力してください。</p>
       <button class="btn danger" id="bkImport">復元する</button>
     </div>
   `;
+  const openBackupsDirBtn = panel.querySelector("#openBackupsDir");
+  if (openBackupsDirBtn) openBackupsDirBtn.onclick = () => revealInExplorer(nativeInfo.backupsDir);
 
   let restoreFileText = null;
 
@@ -306,7 +279,7 @@ function renderBackup(panel) {
     const suggested = `guestvoicestudio_backup_${new Date().toISOString().slice(0,10)}.gvsbackup`;
 
     if (isDesktop) {
-      const picked = await pickSaveFile(suggested, "Guest Voice Studio バックアップ (*.gvsbackup)|*.gvsbackup");
+      const picked = await pickSaveFile(suggested, "Guest Voice Studio バックアップ (*.gvsbackup)|*.gvsbackup", nativeInfo.backupsDir);
       if (!picked.ok) return;
       const result = await writeFileBytes(picked.path, textToBase64(envelopeText));
       if (result.ok) toast(`バックアップを保存しました: ${picked.path}`, "good");
@@ -359,23 +332,32 @@ function renderBackup(panel) {
 }
 
 // ---------------------------------------------------------------------------
+const BRAND_COMPANY_DEFAULT = "一般財団法人休暇村協会";
+let brandCompanyUnlocked = false;
+
 function renderBrand(panel) {
   const brand = db.brand;
   panel.innerHTML = `
     <div class="card">
       <div class="card-title"><h3>ブランド情報（報告書に反映）</h3></div>
-      <div class="field-row">
-        <div class="field"><label>会社名</label><input type="text" id="bCompany" value="${escapeHtml(brand.company||"")}"></div>
-        <div class="field"><label>社内ドメイン（社外アドレス警告に使用）</label><input type="text" id="bDomain" value="${escapeHtml(brand.companyDomain||"")}"></div>
+      <div class="field">
+        <label>会社名</label>
+        <div class="row" style="gap:8px">
+          <input type="text" id="bCompany" value="${escapeHtml(brand.company || BRAND_COMPANY_DEFAULT)}" style="flex:1" ${brandCompanyUnlocked ? "" : "disabled"}>
+          ${brandCompanyUnlocked ? "" : `<button class="btn small" id="unlockCompany">編集する</button>`}
+        </div>
+        <p class="hint">通常は編集不要です。変更すると報告書の見出しに反映されます。</p>
       </div>
     </div>
     <div class="card">
+      <div class="card-title"><h3>改善課題の効果確認機能</h3></div>
+      <div class="field checkbox-row"><input type="checkbox" id="bShowEffect" ${brand.showEffectConfirm ? "checked" : ""}><label style="margin:0">Action Boardに「効果確認」タブ・「効果確認済み」ステータスを表示する</label></div>
+      <p class="hint">初期値は非表示です。対応前後の効果測定を実際に使う場合のみオンにしてください。</p>
+    </div>
+    <div class="card">
       <div class="card-title"><h3>データ保存・取込設定</h3></div>
-      <div class="field-row">
-        <div class="field"><label>データ保存期間（日）</label><input type="number" id="bRetention" value="${brand.retentionDays||1095}"></div>
-        <div class="field checkbox-row" style="align-items:center;margin-top:22px"><input type="checkbox" id="bKeepCsv" ${brand.keepRawCsv?"checked":""}><label style="margin:0">CSV原本を保存する（初期値OFF／IMP-06）</label></div>
-      </div>
-      <p class="hint">未決の場合は会社の情報管理規程に従い、ここで設定してください（要確認事項 §11）。</p>
+      <div class="field"><label>データ保存期間</label><div>${DATA_RETENTION_DAYS}日（5年間・うるう年考慮／編集不可）</div></div>
+      <p class="hint">CSV原本は取込後に破棄され、保存されません。</p>
     </div>
     <div class="card">
       <div class="card-title"><h3>保存先</h3></div>
@@ -383,31 +365,48 @@ function renderBrand(panel) {
         <p class="hint" style="margin-bottom:8px">初回起動時に選んだ場所に保存されています（管理者権限は不要／§7 保存先）。</p>
         <div class="path-box"><span>${escapeHtml(nativeInfo.dataDir || "")}</span><span class="spacer"></span><button class="btn small" id="openDataDir">エクスプローラーで開く</button></div>
         <p class="hint" style="margin-top:8px">保存先を変更するには、この場所ごとフォルダを移動したうえで、
-        <code>%LOCALAPPDATA%\\GuestVoiceStudio.location</code> というファイルをテキストエディタで開き、新しい保存先のパスに書き換えてください（次回起動時から反映されます）。</p>
+        <code>%LOCALAPPDATA%\\GuestVoiceStudio.location</code> というファイルをテキストエディタで開き、新しい保存先のパスに書き換えてください（次回起動時から反映されます）。Dドライブなど別ドライブへの移動も同じ手順で可能です。</p>
       ` : `<p class="hint">ブラウザモードで実行中のため、ブラウザのlocalStorageに保存されています（開発・確認用）。</p>`}
     </div>
     <div class="card">
       <div class="card-title"><h3>個人情報の保護</h3></div>
-      <p class="hint">CSVに含まれるメールアドレス・氏名・電話番号などの列は自動検出し、取り込みません（値を保存しません）。CSV原本を保存する設定の場合も、該当列の値はマスクした状態で保存します（§7 個人情報）。</p>
+      <p class="hint">CSVに含まれるメールアドレス・氏名・電話番号などの列は自動検出し、取り込みません（値を保存しません／§7 個人情報）。</p>
+    </div>
+    <div class="card">
+      <div class="card-title"><h3>このツールについて</h3></div>
+      <div class="field-row">
+        <div class="field"><label>製作日</label><div>2026年8月20日</div></div>
+        <div class="field"><label>製作者</label><div>大籠義記</div></div>
+      </div>
+      <p class="hint">仕様書・使い方の概要は別途お渡ししている資料をご参照ください。</p>
     </div>
     <div class="card">
       <div class="card-title"><h3>試作データのリセット</h3></div>
       <p class="hint">この端末に保存されたデータをすべて初期状態に戻します（初回設定からやり直します）。</p>
       <button class="btn danger" id="resetBtn">全データをリセット</button>
     </div>
+    <div class="card">
+      <div class="card-title"><h3>アンインストール</h3></div>
+      <p class="hint">アプリ本体・データフォルダ・デスクトップショートカットを削除します。作成済みのPDFレポート（Reportsフォルダ内）は削除されません。</p>
+      <button class="btn danger" id="uninstallBtn" ${isDesktop ? "" : "disabled"}>${isDesktop ? "このアプリをアンインストール" : "デスクトップアプリでのみ利用できます"}</button>
+    </div>
     <button class="btn primary" id="saveBrand" style="margin-top:4px">保存</button>
   `;
   panel.querySelector("#saveBrand").onclick = () => {
     db.brand = {
       ...db.brand,
-      company: panel.querySelector("#bCompany").value.trim(),
-      companyDomain: panel.querySelector("#bDomain").value.trim(),
-      retentionDays: Number(panel.querySelector("#bRetention").value) || 1095,
-      keepRawCsv: panel.querySelector("#bKeepCsv").checked,
+      company: panel.querySelector("#bCompany").value.trim() || BRAND_COMPANY_DEFAULT,
+      showEffectConfirm: panel.querySelector("#bShowEffect").checked,
     };
     db.audit("settings_brand_update", "brand", "");
     toast("保存しました", "good");
   };
+  const unlockBtn = panel.querySelector("#unlockCompany");
+  if (unlockBtn) unlockBtn.onclick = () => confirmDialog(
+    "会社名は通常、休暇村協会の正式名称のまま使用します。本当に変更しますか？",
+    () => { brandCompanyUnlocked = true; renderBrand(panel); },
+    { danger: true, okLabel: "編集する" }
+  );
   const openDirBtn = panel.querySelector("#openDataDir");
   if (openDirBtn) openDirBtn.onclick = () => revealInExplorer(nativeInfo.dataDir);
   panel.querySelector("#resetBtn").onclick = () => confirmDialog("すべてのデータを削除して初期状態（初回設定）に戻します。この操作は取り消せません。", () => {
@@ -415,4 +414,15 @@ function renderBrand(panel) {
     toast("初期化しました", "good");
     location.reload();
   }, { danger: true, okLabel: "リセットする" });
+  const uninstallBtn = panel.querySelector("#uninstallBtn");
+  if (uninstallBtn && isDesktop) uninstallBtn.onclick = () => confirmDialog(
+    "Guest Voice Studioをアンインストールします。アプリ本体・データ・デスクトップショートカットが削除され、アプリは終了します（保存済みのPDFレポートは残ります）。よろしいですか？",
+    async () => {
+      db.audit("app_uninstall_requested", "app", "");
+      toast("アンインストールを開始します…", "");
+      const result = await requestUninstall();
+      if (!result.ok) toast("アンインストールを開始できませんでした: " + (result.error || ""), "bad");
+    },
+    { danger: true, okLabel: "アンインストールする" }
+  );
 }

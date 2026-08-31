@@ -48,7 +48,6 @@ function currentScreenKey() {
 }
 
 function renderShell() {
-  const user = db.currentUser();
   const app = document.getElementById("app");
   const storeName = db.storeName(db.LOCAL_STORE_ID);
   app.innerHTML = `
@@ -71,12 +70,6 @@ function renderShell() {
             </button>
           `).join("")}
         </nav>
-        <div class="sidebar-footer">
-          <div class="user-chip">
-            <span>👤</span>
-            <span>${user.name}</span>
-          </div>
-        </div>
       </aside>
       <div class="main">
         <div class="topbar">

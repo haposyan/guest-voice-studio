@@ -27,7 +27,11 @@ export function mountLobby(root) {
   const breakdown = itemBreakdown(curRecords, items, bands);
 
   const myTasks = db.tasks.filter((t) => myStores.includes(t.storeId));
-  const statusCounts = { "未対応": 0, "対応中": 0, "対応済み": 0, "効果確認済み": 0 };
+  // 効果確認済みステータスはSettings＞ブランド・保存設定で表示をオンにするまで
+  // 初期値では使われない（Action Board側と表示を揃える）。
+  const statusCounts = db.brand.showEffectConfirm
+    ? { "未対応": 0, "対応中": 0, "対応済み": 0, "効果確認済み": 0 }
+    : { "未対応": 0, "対応中": 0, "対応済み": 0 };
   let overdue = 0;
   const today = new Date().toISOString().slice(0, 10);
   myTasks.forEach((t) => {
@@ -65,14 +69,15 @@ export function mountLobby(root) {
 
     <div class="grid cols-4">
       ${statTile("回答数", curMetrics.responseCount, "件", delta(curMetrics.responseCount, prevMetrics.responseCount))}
-      ${statTile("平均評価", curMetrics.avg, "", delta(curMetrics.avg, prevMetrics.avg), true)}
-      ${statTile("低評価率", curMetrics.lowRate, "%", delta(curMetrics.lowRate, prevMetrics.lowRate) != null ? -delta(curMetrics.lowRate, prevMetrics.lowRate) : null, true, true)}
-      ${statTile("コメント記入率", curMetrics.fillRate, "%", delta(curMetrics.fillRate, prevMetrics.fillRate))}
+      ${statTile("全項目平均評価", curMetrics.avg, "", delta(curMetrics.avg, prevMetrics.avg), true)}
+      ${statTile("低評価率", curMetrics.lowRate, "%", delta(curMetrics.lowRate, prevMetrics.lowRate) != null ? -delta(curMetrics.lowRate, prevMetrics.lowRate) : null, true, true, "全体のうち2以下の評価率")}
+      ${statTile("コメント記入率", curMetrics.fillRate, "%", delta(curMetrics.fillRate, prevMetrics.fillRate), false, false, "評価かコメントが入った項目のうち、コメントも入力された割合")}
     </div>
 
     <div class="grid cols-2">
       <div class="card">
         <div class="card-title"><h3>項目別の評価・低評価率（今月）</h3></div>
+        <p class="muted" style="font-size:.76rem;margin:-4px 0 8px">※低評価率は「全体のうち2以下の評価率」です（低評価率の定義はLobby上部と共通）。</p>
         <div class="table-wrap"><table><thead><tr><th>項目</th><th>平均</th><th>低評価率</th></tr></thead><tbody>
           ${breakdown.map((b) => `<tr><td>${escapeHtml(b.item.name)}</td><td>${b.metrics.avg ?? "-"}</td><td style="color:${(b.metrics.lowRate||0) > 20 ? "var(--bad)" : "inherit"}">${b.metrics.lowRate ?? "-"}%</td></tr>`).join("")}
         </tbody></table></div>
@@ -99,7 +104,7 @@ export function mountLobby(root) {
   `;
 }
 
-function statTile(label, value, unit, deltaVal, isDecimal, invertGoodBad) {
+function statTile(label, value, unit, deltaVal, isDecimal, invertGoodBad, note) {
   let deltaHtml = "";
   if (deltaVal != null && !isNaN(deltaVal)) {
     const good = invertGoodBad ? deltaVal <= 0 : deltaVal >= 0;
@@ -111,5 +116,6 @@ function statTile(label, value, unit, deltaVal, isDecimal, invertGoodBad) {
     <div class="label">${label}</div>
     <div class="value">${value ?? "-"}<span class="unit">${unit}</span></div>
     ${deltaHtml}
+    ${note ? `<div class="muted" style="font-size:.68rem;margin-top:2px;line-height:1.3">※${note}</div>` : ""}
   </div>`;
 }

@@ -8,7 +8,11 @@ import { allowedStoreIds, can } from "../app.js";
 import { filterRecords, computeMetrics, delta } from "../analysis.js";
 import { openModal, closeModal, escapeHtml, toast, confirmDialog } from "../components/ui.js";
 
-const STATUSES = ["未対応", "対応中", "対応済み", "効果確認済み"];
+const ALL_STATUSES = ["未対応", "対応中", "対応済み", "効果確認済み"];
+// 効果確認済みステータス・効果確認タブは初期値では非表示（Settings＞ブランド・保存設定で表示可）。
+function visibleStatuses() {
+  return db.brand.showEffectConfirm ? ALL_STATUSES : ALL_STATUSES.filter((s) => s !== "効果確認済み");
+}
 
 export function mountActionBoard(root) {
   render(root);
@@ -16,7 +20,8 @@ export function mountActionBoard(root) {
 
 function render(root) {
   const myStores = allowedStoreIds();
-  const tasks = db.tasks.filter((t) => myStores.includes(t.storeId));
+  const STATUSES = visibleStatuses();
+  const tasks = db.tasks.filter((t) => myStores.includes(t.storeId) && STATUSES.includes(t.status));
   const today = new Date().toISOString().slice(0, 10);
 
   root.innerHTML = `
@@ -160,19 +165,23 @@ function openTaskDetail(taskId, root) {
   const editable = can("editTasks");
   const bands = db.ratingBands;
   const selectedIds = [...task.relatedComments];
+  const showEffect = !!db.brand.showEffectConfirm;
+  // 現在のタスクが既に効果確認済みの場合は、非表示設定でも選択肢から消してしまうと
+  // 元に戻せなくなるため、状態選択肢には残す。
+  const statusOptions = showEffect || task.status === "効果確認済み" ? ALL_STATUSES : visibleStatuses();
 
   openModal(`
     <div class="modal-header"><h3>${escapeHtml(task.title)} ${task.severityFlag ? "🚩" : ""}</h3><button data-close>&times;</button></div>
     <div class="tabs">
       <button class="tab-btn active" data-tab="basic">基本・実行</button>
-      <button class="tab-btn" data-tab="effect">効果確認</button>
+      ${showEffect ? `<button class="tab-btn" data-tab="effect">効果確認</button>` : ""}
       <button class="tab-btn" data-tab="history">更新履歴</button>
     </div>
     <div data-pane="basic">
       <div class="field"><label>項目</label><div>${escapeHtml(db.itemById(task.itemId)?.name || "-")}</div></div>
       <div class="field"><label>状態</label>
         <select id="statusSelect" ${editable ? "" : "disabled"}>
-          ${STATUSES.map((s) => `<option value="${s}" ${task.status === s ? "selected" : ""}>${s}</option>`).join("")}
+          ${statusOptions.map((s) => `<option value="${s}" ${task.status === s ? "selected" : ""}>${s}</option>`).join("")}
         </select>
       </div>
       <div class="field"><label>説明</label><textarea id="descField" ${editable ? "" : "disabled"}>${escapeHtml(task.description)}</textarea></div>

@@ -3,7 +3,7 @@
 // report history, audit log (§4.11).
 // ============================================================================
 
-import { db } from "../db.js";
+import { db, DATA_RETENTION_DAYS } from "../db.js";
 import { can } from "../app.js";
 import { escapeHtml, confirmDialog, toast } from "../components/ui.js";
 
@@ -42,17 +42,14 @@ function renderImportHistory(pane) {
     <div class="card">
       <div class="card-title"><h3>取込バッチ一覧</h3><a href="#import" class="btn small primary">＋ 新しく取り込む</a></div>
       <div class="table-wrap"><table><thead><tr>
-        <th>取込日時</th><th>ファイル名</th><th>実行者</th><th>文字コード</th><th>対象期間</th><th>成功/重複/エラー/対象外</th><th>原本保存</th>
+        <th>取込日時</th><th>ファイル名</th><th>対象期間</th><th>成功/重複/エラー/対象外</th>
       </tr></thead><tbody>
         ${batches.map((b) => `<tr>
           <td>${new Date(b.importedAt).toLocaleString("ja-JP")}</td>
           <td>${escapeHtml(b.filename)}</td>
-          <td>${escapeHtml(b.importer||"-")}</td>
-          <td>${escapeHtml(b.encoding||"-")}</td>
           <td>${b.periodStart||"-"} ～ ${b.periodEnd||"-"}</td>
           <td>${b.success} / ${b.duplicate} / ${b.error} / ${b.excluded}</td>
-          <td>${b.keepRawCsv ? "保存" : "非保存"}</td>
-        </tr>`).join("") || `<tr><td colspan="7" class="empty-state">取込履歴がありません</td></tr>`}
+        </tr>`).join("") || `<tr><td colspan="4" class="empty-state">取込履歴がありません</td></tr>`}
       </tbody></table></div>
     </div>
   `;
@@ -103,7 +100,7 @@ function renderAudit(pane) {
         <h3>監査ログ（誰が・いつ・何をしたか）</h3>
         ${can("deleteData") ? `<button class="btn small danger" id="purgeOld">保存期限を過ぎたログを削除</button>` : ""}
       </div>
-      <p class="hint">保存期限は Settings ＞ データ保存期間 で設定できます（現在: ${db.brand.retentionDays || "-"}日）。削除は権限者のみ実行できます。</p>
+      <p class="hint">保存期限は${DATA_RETENTION_DAYS}日（5年間）に固定されています。削除は権限者のみ実行できます。</p>
       <div class="table-wrap"><table><thead><tr><th>日時</th><th>操作者</th><th>操作</th><th>対象</th><th>詳細</th></tr></thead><tbody>
         ${log.slice(0, 200).map((l) => `<tr><td>${new Date(l.date).toLocaleString("ja-JP")}</td><td>${escapeHtml(l.user)}</td><td>${escapeHtml(l.action)}</td><td>${escapeHtml(l.target)}</td><td>${escapeHtml(l.detail)}</td></tr>`).join("") || `<tr><td colspan="5" class="empty-state">ログがありません</td></tr>`}
       </tbody></table></div>
@@ -112,7 +109,7 @@ function renderAudit(pane) {
   const purgeBtn = pane.querySelector("#purgeOld");
   if (purgeBtn) purgeBtn.onclick = () => {
     confirmDialog("保存期限を過ぎた監査ログを完全に削除します。この操作は取り消せません。", () => {
-      const days = db.brand.retentionDays || 1095;
+      const days = DATA_RETENTION_DAYS;
       const cutoff = Date.now() - days * 86400000;
       db.auditLog = db.auditLog.filter((l) => new Date(l.date).getTime() >= cutoff);
       db.audit("purge_audit_log", "auditLog", `${days}日超のログを削除`);

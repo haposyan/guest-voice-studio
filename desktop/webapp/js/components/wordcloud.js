@@ -44,14 +44,20 @@ export function renderSentimentLegend() {
     <span class="wc-legend-item"><span class="wc-swatch positive"></span>ポジティブ</span>
     <span class="wc-legend-item"><span class="wc-swatch negative"></span>ネガティブ</span>
     <span class="wc-legend-item"><span class="wc-swatch neutral"></span>中性</span>
-  </div>`;
+  </div>
+  <p class="muted" style="font-size:.76rem;margin:2px 0 10px">
+    ※色は単語そのものの意味ではなく、「その単語を含むコメントの評価点」の内訳（低評価/中立/高評価のどれが多いか）で自動的に判定しています。
+    そのため一般的にはネガティブな響きの語でも、高評価のコメントに多く出てくればポジティブ表示になることがあります。
+  </p>`;
 }
 
 export function renderWordRanking(words, opts = {}) {
   const limit = opts.limit || 15;
   const top = words.slice(0, limit);
   if (!top.length) return `<div class="empty-state">頻出語がありません</div>`;
-  return `<table><thead><tr><th>語</th><th>分類</th><th>件数</th><th>出現率(/100件)</th><th>内訳(低/中/高評価)</th></tr></thead><tbody>
+  return `<div class="wc-ranking">
+    <p class="muted" style="font-size:.78rem;margin:0 0 6px">出現件数が多い順に上位${limit}件のみ表示しています。</p>
+    <table><thead><tr><th>語</th><th>分類</th><th>件数</th><th>出現率(/100件)</th><th>内訳(低/中/高評価)</th></tr></thead><tbody>
     ${top.map((w) => `<tr>
       <td><button type="button" class="wc-word ${w.sentiment}" data-word="${esc(w.word)}" style="font-size:1em">${esc(w.word)}${w.sentimentIsOverridden ? '<span class="wc-override-mark">✎</span>' : ""}</button></td>
       <td><span class="sentiment-pill ${w.sentiment}">${SENTIMENT_LABEL[w.sentiment]}</span></td>
@@ -59,5 +65,6 @@ export function renderWordRanking(words, opts = {}) {
       <td>${w.ratePer100}</td>
       <td><span class="rating-dot low">${w.negCount}</span> / <span class="rating-dot mid">${w.midCount}</span> / <span class="rating-dot high">${w.posCount}</span></td>
     </tr>`).join("")}
-  </tbody></table>`;
+  </tbody></table>
+  </div>`;
 }

@@ -17,6 +17,9 @@
 // using the signed-in Windows account name instead (see currentUser()).
 // ============================================================================
 
+// データ保存期間は編集不可・固定（うるう年を含む5年分）。
+export const DATA_RETENTION_DAYS = 365 * 5 + 1;
+
 const NS = "cv_";
 const KEYS = {
   stores: "stores",
@@ -155,7 +158,20 @@ export const db = {
     if (!localStorage.getItem(NS + KEYS.auditLog)) save(KEYS.auditLog, []);
     if (!localStorage.getItem(NS + KEYS.savedViews)) save(KEYS.savedViews, []);
     if (!localStorage.getItem(NS + KEYS.ratingBands)) save(KEYS.ratingBands, seedRatingBands());
-    if (!localStorage.getItem(NS + KEYS.brand)) save(KEYS.brand, { company: "一般財団法人休暇村協会", logo: "", retentionDays: 1095, keepRawCsv: false });
+    if (!localStorage.getItem(NS + KEYS.brand)) {
+      save(KEYS.brand, { company: "一般財団法人休暇村協会", logo: "", showEffectConfirm: false, reportAuthors: [] });
+    } else {
+      // v2.2: keepRawCsv・retentionDays（可変）は廃止（データ保存期間は
+      // DATA_RETENTION_DAYS に固定）。showEffectConfirm・reportAuthors は
+      // 既存インストールに後から追加されたフィールドなので補完する。
+      const b = load(KEYS.brand, {});
+      let changed = false;
+      if ("keepRawCsv" in b) { delete b.keepRawCsv; changed = true; }
+      if ("retentionDays" in b) { delete b.retentionDays; changed = true; }
+      if (!("showEffectConfirm" in b)) { b.showEffectConfirm = false; changed = true; }
+      if (!("reportAuthors" in b)) { b.reportAuthors = []; changed = true; }
+      if (changed) save(KEYS.brand, b);
+    }
     if (!localStorage.getItem(NS + KEYS.sentimentOverrides)) save(KEYS.sentimentOverrides, {});
   },
 

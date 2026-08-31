@@ -34,7 +34,8 @@ function callNative(type, payload = {}) {
 
 export function openPath(path) { return callNative("openPath", { path }); }
 export function revealInExplorer(path) { return callNative("revealInExplorer", { path }); }
-export function pickSaveFile(suggestedName, filter) { return callNative("pickSaveFile", { suggestedName, filter }); }
+export function pickSaveFile(suggestedName, filter, initialDirectory) { return callNative("pickSaveFile", { suggestedName, filter, initialDirectory }); }
+export function requestUninstall() { return callNative("requestUninstall", {}); }
 export function pickOpenFile(filter) { return callNative("pickOpenFile", { filter }); }
 export function printToPdf(path) { return callNative("printToPdf", { path }); }
 export function readFileBytes(path) { return callNative("readFileBytes", { path }); }

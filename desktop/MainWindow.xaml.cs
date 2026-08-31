@@ -2,6 +2,8 @@ using System.Diagnostics;
 using System.IO;
 using System.Text.Json;
 using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Threading;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Win32;
 
@@ -23,6 +25,12 @@ namespace GuestVoiceStudio;
 public partial class MainWindow : Window
 {
     private string _dataDir = "";
+    // Startup splash must stay up at least this long — the app loads so fast
+    // on modern hardware that it used to flash and disappear before the user
+    // could read the logo/tagline.
+    private static readonly TimeSpan MinSplashDuration = TimeSpan.FromSeconds(1);
+    private readonly Stopwatch _splashStopwatch = Stopwatch.StartNew();
+    private DispatcherTimer? _zoomIndicatorTimer;
 
     public MainWindow()
     {
@@ -34,7 +42,7 @@ public partial class MainWindow : Window
     {
         try
         {
-            CreateDesktopShortcutIfMissing();
+            CreateDesktopShortcutIfMissing(this);
             await InitializeWebViewAsync();
         }
         catch (Exception ex)
@@ -103,15 +111,40 @@ public partial class MainWindow : Window
             $"window.__NATIVE__ = {nativeContext};");
 
         Browser.CoreWebView2.WebMessageReceived += CoreWebView2_WebMessageReceived;
-        Browser.CoreWebView2.NavigationCompleted += (_, args) =>
+        Browser.CoreWebView2.NavigationCompleted += async (_, args) =>
         {
-            if (args.IsSuccess) LoadingOverlay.Visibility = Visibility.Collapsed;
+            if (!args.IsSuccess) return;
+            var remaining = MinSplashDuration - _splashStopwatch.Elapsed;
+            if (remaining > TimeSpan.Zero) await System.Threading.Tasks.Task.Delay(remaining);
+            LoadingOverlay.Visibility = Visibility.Collapsed;
         };
 
         Browser.CoreWebView2.Settings.AreDefaultContextMenusEnabled = true;
         Browser.CoreWebView2.Settings.AreDevToolsEnabled = true; // left on to support field troubleshooting
 
+        // Ctrl+マウスホイール／Ctrl+ +/- でのズーム操作に対して、現在の倍率(%)を
+        // 右下に数秒間だけ表示する（何%か分からない、という実機フィードバック対応）。
+        Browser.ZoomFactorChanged += Browser_ZoomFactorChanged;
+
         Browser.CoreWebView2.Navigate("https://appassets.local/index.html");
+    }
+
+    private void Browser_ZoomFactorChanged(object? sender, EventArgs e)
+    {
+        var percent = (int)Math.Round(Browser.ZoomFactor * 100);
+        ZoomIndicatorText.Text = $"{percent}%";
+        ZoomIndicator.Visibility = Visibility.Visible;
+        ZoomIndicator.Opacity = 1;
+
+        _zoomIndicatorTimer?.Stop();
+        _zoomIndicatorTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
+        _zoomIndicatorTimer.Tick += (_, _) =>
+        {
+            _zoomIndicatorTimer!.Stop();
+            ZoomIndicator.Opacity = 0;
+            ZoomIndicator.Visibility = Visibility.Collapsed;
+        };
+        _zoomIndicatorTimer.Start();
     }
 
     /// <summary>
@@ -161,12 +194,13 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// Creates a Desktop shortcut to this exe on first launch, so the user
-    /// doesn't have to keep navigating to wherever the exe was unzipped.
-    /// Idempotent — does nothing once the shortcut already exists (even if
-    /// the user later deletes it, which is treated as an intentional choice).
+    /// Asks (once, on first launch) whether to create a Desktop shortcut to
+    /// this exe, then creates it if the user leaves the pre-checked checkbox
+    /// checked. Idempotent — does nothing once already asked, even if the
+    /// user later deletes the shortcut (treated as an intentional choice) or
+    /// declined the first time.
     /// </summary>
-    private static void CreateDesktopShortcutIfMissing()
+    private static void CreateDesktopShortcutIfMissing(Window owner)
     {
         try
         {
@@ -177,6 +211,9 @@ public partial class MainWindow : Window
                 "GuestVoiceStudio.shortcut-created");
             if (File.Exists(markerPath)) return;
 
+            File.WriteAllText(markerPath, DateTime.Now.ToString("O"));
+            if (!ShowShortcutConsentDialog(owner)) return;
+
             var exePath = Environment.ProcessPath ?? Path.Combine(AppContext.BaseDirectory, "GuestVoiceStudio.exe");
 
             dynamic shell = Activator.CreateInstance(Type.GetTypeFromProgID("WScript.Shell")!)!;
@@ -186,13 +223,48 @@ public partial class MainWindow : Window
             shortcut.IconLocation = exePath + ",0";
             shortcut.Description = "お客様の声・改善管理（Guest Voice Studio）";
             shortcut.Save();
-
-            File.WriteAllText(markerPath, DateTime.Now.ToString("O"));
         }
         catch
         {
             // Best-effort only — a missing shortcut is not fatal, the exe still works directly.
         }
+    }
+
+    /// <summary>
+    /// Small inline confirmation dialog (checkbox pre-checked) — kept as
+    /// plain code-behind UI rather than a separate .xaml so the shortcut
+    /// consent flow doesn't need its own window resource.
+    /// </summary>
+    private static bool ShowShortcutConsentDialog(Window owner)
+    {
+        var win = new Window
+        {
+            Title = "デスクトップショートカット",
+            Width = 420,
+            SizeToContent = SizeToContent.Height,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            Owner = owner,
+            ResizeMode = ResizeMode.NoResize,
+            Background = System.Windows.Media.Brushes.White,
+        };
+        var panel = new StackPanel { Margin = new Thickness(20) };
+        panel.Children.Add(new TextBlock
+        {
+            Text = "デスクトップに「Guest Voice Studio」のショートカットを作成しますか？",
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 0, 0, 14),
+        });
+        var chk = new CheckBox { Content = "デスクトップにショートカットを作成する", IsChecked = true, Margin = new Thickness(0, 0, 0, 18) };
+        panel.Children.Add(chk);
+        var btnPanel = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
+        var okBtn = new Button { Content = "OK", Width = 90, Padding = new Thickness(0, 6, 0, 6), IsDefault = true };
+        var result = false;
+        okBtn.Click += (_, _) => { result = chk.IsChecked == true; win.Close(); };
+        btnPanel.Children.Add(okBtn);
+        panel.Children.Add(btnPanel);
+        win.Content = panel;
+        win.ShowDialog();
+        return result;
     }
 
     private async void CoreWebView2_WebMessageReceived(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
@@ -227,7 +299,10 @@ public partial class MainWindow : Window
                 {
                     var suggestedName = root.TryGetProperty("suggestedName", out var sn) ? sn.GetString() : "file";
                     var filter = root.TryGetProperty("filter", out var f) ? f.GetString() : "All files (*.*)|*.*";
+                    var initialDirectory = root.TryGetProperty("initialDirectory", out var idEl) ? idEl.GetString() : null;
                     var dlg = new SaveFileDialog { FileName = suggestedName, Filter = filter };
+                    if (!string.IsNullOrWhiteSpace(initialDirectory) && Directory.Exists(initialDirectory))
+                        dlg.InitialDirectory = initialDirectory;
                     var result = dlg.ShowDialog(this);
                     Reply(requestId, new { ok = result == true, path = result == true ? dlg.FileName : null });
                     break;
@@ -264,6 +339,18 @@ public partial class MainWindow : Window
                     Reply(requestId, new { ok = true, path });
                     break;
                 }
+                case "requestUninstall":
+                {
+                    // Confirmation already happened on the JS side (Settings＞
+                    // ブランド・保存設定). Reply first so the toast can render,
+                    // then hand off to a detached helper script that waits for
+                    // this process to exit before deleting anything — this
+                    // process can't delete its own running exe/dll files.
+                    Reply(requestId, new { ok = true });
+                    await System.Threading.Tasks.Task.Delay(300);
+                    StartUninstallHelperAndExit();
+                    break;
+                }
                 default:
                     Reply(requestId, new { ok = false, error = "unknown command" });
                     break;
@@ -274,6 +361,57 @@ public partial class MainWindow : Window
             Reply(requestId, new { ok = false, error = ex.Message });
         }
     }
+
+    /// <summary>
+    /// Writes a small PowerShell helper to %TEMP%, launches it detached, then
+    /// exits this app. The helper waits for our process to fully release its
+    /// files, deletes the app folder (the exe's own directory), the desktop
+    /// shortcut, the two %LOCALAPPDATA% marker files, and everything under
+    /// the data folder EXCEPT the Reports subfolder (so PDF reports the user
+    /// already generated survive), then deletes itself.
+    /// </summary>
+    private void StartUninstallHelperAndExit()
+    {
+        var appDir = AppContext.BaseDirectory.TrimEnd('\\');
+        var dataDir = _dataDir;
+        var desktopDir = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
+        var shortcutPath = Path.Combine(desktopDir, "Guest Voice Studio.lnk");
+        var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        var locatorPath = Path.Combine(localAppData, "GuestVoiceStudio.location");
+        var markerPath = Path.Combine(localAppData, "GuestVoiceStudio.shortcut-created");
+        var scriptPath = Path.Combine(Path.GetTempPath(), $"gvs_uninstall_{Guid.NewGuid():N}.ps1");
+
+        var script = $$"""
+            $ErrorActionPreference = 'SilentlyContinue'
+            try { Wait-Process -Id {{Environment.ProcessId}} -Timeout 30 } catch {}
+            Start-Sleep -Seconds 1
+            $shortcut = '{{EscapePs(shortcutPath)}}'
+            if ($shortcut -and (Test-Path $shortcut)) { Remove-Item $shortcut -Force }
+            $dataDir = '{{EscapePs(dataDir)}}'
+            if ($dataDir -and (Test-Path $dataDir)) {
+              Get-ChildItem -LiteralPath $dataDir -Force | Where-Object { $_.Name -ne 'Reports' } | Remove-Item -Recurse -Force
+            }
+            $locator = '{{EscapePs(locatorPath)}}'
+            if ($locator -and (Test-Path $locator)) { Remove-Item $locator -Force }
+            $marker = '{{EscapePs(markerPath)}}'
+            if ($marker -and (Test-Path $marker)) { Remove-Item $marker -Force }
+            $appDir = '{{EscapePs(appDir)}}'
+            if ($appDir -and (Test-Path $appDir)) { Remove-Item -LiteralPath $appDir -Recurse -Force }
+            Remove-Item -LiteralPath $MyInvocation.MyCommand.Path -Force
+            """;
+        File.WriteAllText(scriptPath, script);
+
+        Process.Start(new ProcessStartInfo("powershell.exe",
+            $"-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File \"{scriptPath}\"")
+        {
+            UseShellExecute = true,
+            WindowStyle = ProcessWindowStyle.Hidden,
+        });
+
+        Application.Current.Shutdown();
+    }
+
+    private static string EscapePs(string value) => value.Replace("'", "''");
 
     private void Reply(string? requestId, object payload)
     {

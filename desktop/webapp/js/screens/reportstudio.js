@@ -23,7 +23,7 @@ import { filterRecords, computeMetrics, itemBreakdown, periodPreset, delta } fro
 import { computeWordFrequencies } from "../tokenizer.js";
 import { renderWordCloud } from "../components/wordcloud.js";
 import * as analysis from "../analysis.js";
-import { openModal, closeModal, escapeHtml, toast } from "../components/ui.js";
+import { escapeHtml, toast } from "../components/ui.js";
 import { isDesktop, nativeInfo, printToPdf, pickSaveFile, readFileBytes, writeFileBytes, openPath, textToBase64 } from "../native.js";
 import { buildEml } from "../eml.js";
 
@@ -38,7 +38,7 @@ export function mountReportStudio(root) {
     itemIds: [],
     periodStart: thisM.start, periodEnd: thisM.end,
     compareStart: lastM.start, compareEnd: lastM.end,
-    type: "summary",
+    type: "detail", // 要約版は廃止・詳細版のみ
     includedComments: [],
   };
   currentReport = null;
@@ -66,15 +66,6 @@ function render(root) {
           ${items.map((i) => `<span class="chip ${cfg.itemIds.includes(i.id) ? "active" : ""}" data-item="${i.id}">${escapeHtml(i.name)}</span>`).join("")}
         </div>
       </div>
-      <div class="field-row" style="margin-top:10px">
-        <div class="field">
-          <label>種別</label>
-          <div class="pill-toggle">
-            <button data-type="summary" class="${cfg.type === "summary" ? "active" : ""}">要約版（1〜2ページ）</button>
-            <button data-type="detail" class="${cfg.type === "detail" ? "active" : ""}">詳細版</button>
-          </div>
-        </div>
-      </div>
       <div class="row" style="justify-content:flex-end;margin-top:14px">
         <button class="btn primary" id="genBtn">プレビュー生成</button>
       </div>
@@ -84,7 +75,6 @@ function render(root) {
 
   root.querySelector("[data-item-all]").onclick = () => { cfg.itemIds = []; render(root); };
   root.querySelectorAll("[data-item]").forEach((el) => el.onclick = () => { const id = el.dataset.item; const i = cfg.itemIds.indexOf(id); if (i >= 0) cfg.itemIds.splice(i, 1); else cfg.itemIds.push(id); render(root); });
-  root.querySelectorAll("[data-type]").forEach((el) => el.onclick = () => { cfg.type = el.dataset.type; render(root); });
   root.querySelector("#pStart").onchange = (e) => { cfg.periodStart = e.target.value; };
   root.querySelector("#pEnd").onchange = (e) => { cfg.periodEnd = e.target.value; };
   root.querySelector("#cStart").onchange = (e) => { cfg.compareStart = e.target.value; };
@@ -131,18 +121,23 @@ function generatePreview(root) {
   currentReport = { cfg: { ...cfg }, m, pm, breakdown, words, themeDiff, statusCounts, verified, summaryText, storeNames, commentCount, lastPdfPath: null };
 
   const brand = db.brand;
+  const villageName = db.storeName(db.LOCAL_STORE_ID);
+  const authorOptions = (brand.reportAuthors && brand.reportAuthors.length) ? brand.reportAuthors : [user.name];
   const wrap = root.querySelector("#previewWrap");
   wrap.innerHTML = `
     <div class="card no-print">
       <div class="card-title"><h3>体裁設定</h3></div>
       <div class="field-row">
-        <div class="field"><label>会社名</label><input type="text" id="brandCompany" value="${escapeHtml(brand.company||"")}"></div>
-        <div class="field"><label>作成者</label><input type="text" id="brandAuthor" value="${escapeHtml(user.name)}"></div>
+        <div class="field"><label>村名</label><input type="text" id="brandCompany" value="${escapeHtml(villageName)}" disabled title="Settings＞基本情報の村名から反映されます"></div>
+        <div class="field"><label>報告者</label>
+          <select id="brandAuthor">
+            ${authorOptions.map((a) => `<option value="${escapeHtml(a)}" ${a === user.name ? "selected" : ""}>${escapeHtml(a)}</option>`).join("")}
+          </select>
+        </div>
       </div>
       <div class="field"><label>概要（自動生成・編集可）</label><textarea id="summaryEdit" rows="5">${escapeHtml(summaryText)}</textarea></div>
       <button class="btn small" id="applyEdit">プレビューに反映</button>
       <hr class="divider">
-      <p class="hint">元コメントは初期状態では掲載されません。掲載したいコメントのみ選択してください。</p>
       <input type="text" id="commentSearch" placeholder="コメントを検索して掲載候補に追加">
       <div id="commentSearchResults" class="stack" style="max-height:140px;overflow-y:auto;margin-top:6px"></div>
       <div style="margin-top:8px"><label>掲載予定コメント（${cfg.includedComments.length}件）</label>
@@ -150,7 +145,7 @@ function generatePreview(root) {
       </div>
       <div class="row" style="justify-content:flex-end;margin-top:16px;gap:8px">
         <button class="btn gold" id="printBtn">🖨 PDFとして保存</button>
-        ${can("createDraft") ? `<button class="btn primary" id="draftBtn">✉ Outlookで下書きを作成</button>` : ""}
+        ${can("createDraft") ? `<button class="btn primary" id="draftBtn">✉ Outlookで送る</button>` : ""}
       </div>
     </div>
     <div class="report-page" id="reportPage"></div>
@@ -158,11 +153,10 @@ function generatePreview(root) {
 
   wireCommentPicker(wrap, root);
   wrap.querySelector("#applyEdit").onclick = () => { currentReport.summaryText = wrap.querySelector("#summaryEdit").value; renderReportPage(wrap); };
-  wrap.querySelector("#brandCompany").onchange = (e) => { db.brand = { ...db.brand, company: e.target.value }; renderReportPage(wrap); };
   wrap.querySelector("#brandAuthor").onchange = (e) => { currentReport.author = e.target.value; renderReportPage(wrap); };
   wrap.querySelector("#printBtn").onclick = () => handlePrint(wrap);
   const draftBtn = wrap.querySelector("#draftBtn");
-  if (draftBtn) draftBtn.onclick = () => openDraftModal(root);
+  if (draftBtn) draftBtn.onclick = () => sendViaOutlook(wrap);
 
   currentReport.author = user.name;
   renderReportPage(wrap);
@@ -195,12 +189,12 @@ function renderReportPage(wrap) {
   page.innerHTML = `
     <div class="report-header">
       <div>
-        <div class="company">${escapeHtml(brand.company || "会社名未設定")}</div>
+        <div class="company">${escapeHtml(brand.company || "一般財団法人休暇村協会")}</div>
         <h1 style="margin:4px 0">お客様の声 月次報告</h1>
         <div class="muted">${escapeHtml(r.storeNames)} ／ ${r.cfg.periodStart} ～ ${r.cfg.periodEnd}</div>
       </div>
       <div class="muted" style="text-align:right">
-        <div>作成者: ${escapeHtml(r.author||"")}</div>
+        <div>報告者: ${escapeHtml(r.author||"")}</div>
         <div>作成日: ${new Date().toLocaleDateString("ja-JP")}</div>
       </div>
     </div>
@@ -274,7 +268,7 @@ async function handlePrint(wrap) {
     return;
   }
   const suggested = reportFileBaseName() + ".pdf";
-  const picked = await pickSaveFile(suggested, "PDF ファイル (*.pdf)|*.pdf");
+  const picked = await pickSaveFile(suggested, "PDF ファイル (*.pdf)|*.pdf", nativeInfo.reportsDir);
   if (!picked.ok) return;
   toast("PDFを作成しています…", "");
   const result = await printToPdf(picked.path);
@@ -295,86 +289,49 @@ async function ensurePdfForDraft() {
   return path;
 }
 
-function openDraftModal(root) {
-  const rec = currentReport.savedId ? db.reports.find((x) => x.id === currentReport.savedId) : saveReportRecord();
-  const candidates = db.recipients;
-  openModal(`
-    <div class="modal-header"><h3>Outlook下書きを作成</h3><button data-close>&times;</button></div>
-    <p class="hint">${isDesktop
-      ? "PDFを自動生成し、添付済みのEMLファイルを既定のメールソフト（Outlook等）で開きます（MAIL-02/04/05）。"
-      : "宛先・件名・本文入りのメール作成画面を開きます。PDFは事前に保存しておき、手動で添付してください（MAIL-05）。"}</p>
-    <div class="field"><label>宛先を選択</label>
-      <select id="recipientSelect">${candidates.map((c) => `<option value="${c.id}">${escapeHtml(c.name)} &lt;${c.email}&gt;</option>`).join("") || `<option value="">登録済み宛先がありません（Settingsで登録）</option>`}</select>
-    </div>
-    <div id="warnArea"></div>
-    <div class="row" style="justify-content:flex-end;margin-top:12px">
-      <button class="btn ghost" data-cancel>キャンセル</button>
-      <button class="btn primary" id="openMail" ${candidates.length ? "" : "disabled"}>${isDesktop ? "EMLを作成して開く" : "メール作成画面を開く"}</button>
-    </div>
-  `, { onMount: (r) => {
-    r.querySelector("[data-close]").onclick = closeModal;
-    r.querySelector("[data-cancel]").onclick = closeModal;
-    const sel = r.querySelector("#recipientSelect");
-    function checkWarn() {
-      const c = candidates.find((x) => x.id === sel.value);
-      const warnArea = r.querySelector("#warnArea");
-      if (c && !c.email.endsWith("@" + (db.brand.companyDomain || "example.co.jp"))) {
-        warnArea.innerHTML = `<p class="hint" style="color:var(--warn)">⚠ 社外アドレス宛の可能性があります（MAIL-06）。送信前によく確認してください。</p>`;
-      } else warnArea.innerHTML = "";
-    }
-    sel.onchange = checkWarn; checkWarn();
-    r.querySelector("#openMail").onclick = () => isDesktop ? createDesktopDraft(sel, candidates, rec) : createMailtoDraft(sel, candidates, rec);
-  }});
-}
-
-function fillTemplate(tpl, rec) {
+// v2.2: 宛先の事前登録・テンプレート選択は廃止。件名・本文はその場で組み立て、
+// 宛先(To)は空欄のままOutlook等の既定メールソフトを開く（そのまま送信先を
+// 手入力してもらえば十分、という実機フィードバックを反映）。
+function buildSubjectAndBody(rec) {
   const period = `${rec.periodStart}〜${rec.periodEnd}`;
-  return tpl.replace(/\{\{store\}\}/g, currentReport.storeNames).replace(/\{\{period\}\}/g, period).replace(/\{\{author\}\}/g, currentReport.author || "");
+  const subject = `【${currentReport.storeNames}】お客様の声 月次報告（${period}）`;
+  const body = `いつもお世話になっております。\n${currentReport.storeNames}の${period}分レポートを添付いたします。\n\n${currentReport.author || ""}`;
+  return { subject, body };
 }
 
-async function createDesktopDraft(sel, candidates, rec) {
-  const c = candidates.find((x) => x.id === sel.value);
-  if (!c) return;
+async function sendViaOutlook(wrap) {
+  const rec = currentReport.savedId ? db.reports.find((x) => x.id === currentReport.savedId) : saveReportRecord();
+  const { subject, body } = buildSubjectAndBody(rec);
+  if (!isDesktop) {
+    const mailto = `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body + "\n\n※PDFレポートを手動で添付してください。")}`;
+    window.location.href = mailto;
+    logDraft(rec, "mailto");
+    toast("メール作成画面を開きました。PDFは手動で添付してください。", "good");
+    return;
+  }
   try {
-    toast("PDFを生成し、EMLを作成しています…", "");
+    toast("PDFを生成し、Outlookで開く下書きを作成しています…", "");
     const pdfPath = await ensurePdfForDraft();
     const pdfResult = await readFileBytes(pdfPath);
     if (!pdfResult.ok) throw new Error(pdfResult.error || "PDFの読み込みに失敗しました");
-
-    const subject = fillTemplate(c.subjectTemplate, rec);
-    const body = fillTemplate(c.bodyTemplate, rec);
     const eml = buildEml({
-      to: c.email, cc: c.cc || "", subject, bodyText: body,
+      to: "", cc: "", subject, bodyText: body,
       attachmentBase64: pdfResult.base64, attachmentName: reportFileBaseName() + ".pdf",
     });
     const emlPath = `${nativeInfo.reportsDir}\\${reportFileBaseName()}_${Date.now()}.eml`;
     const writeResult = await writeFileBytes(emlPath, textToBase64(eml));
     if (!writeResult.ok) throw new Error(writeResult.error || "EMLの保存に失敗しました");
-
     await openPath(emlPath);
-
-    const dh = db.draftHistory;
-    dh.unshift({ id: db.uid("draft"), reportId: rec.id, recipientNames: c.name, createdAt: new Date().toISOString(), user: db.currentUser().name, method: "eml" });
-    db.draftHistory = dh;
-    db.audit("draft_create", rec.id, `宛先: ${c.name}（EML）`);
-    toast("EMLを作成し、既定のメールソフトで開きました。", "good");
-    closeModal();
+    logDraft(rec, "eml");
+    toast("Outlook（既定のメールソフト）で下書きを開きました。宛先を入力してご確認のうえ送信してください。", "good");
   } catch (err) {
     toast("下書き作成に失敗しました: " + err.message, "bad");
   }
 }
 
-function createMailtoDraft(sel, candidates, rec) {
-  const c = candidates.find((x) => x.id === sel.value);
-  if (!c) return;
-  const subject = fillTemplate(c.subjectTemplate, rec);
-  const body = fillTemplate(c.bodyTemplate, rec);
-  const mailto = `mailto:${encodeURIComponent(c.email)}?cc=${encodeURIComponent(c.cc||"")}&subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body + "\n\n※PDFレポートを手動で添付してください。")}`;
-  window.location.href = mailto;
+function logDraft(rec, method) {
   const dh = db.draftHistory;
-  dh.unshift({ id: db.uid("draft"), reportId: rec.id, recipientNames: c.name, createdAt: new Date().toISOString(), user: db.currentUser().name, method: "mailto" });
+  dh.unshift({ id: db.uid("draft"), reportId: rec.id, recipientNames: "（宛先は送信時に入力）", createdAt: new Date().toISOString(), user: db.currentUser().name, method });
   db.draftHistory = dh;
-  db.audit("draft_create", rec.id, `宛先: ${c.name}`);
-  toast("メール作成画面を開きました。PDFは手動で添付してください。", "good");
-  closeModal();
+  db.audit("draft_create", rec.id, "Outlookで送る");
 }
