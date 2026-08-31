@@ -27,10 +27,13 @@ public partial class MainWindow : Window
     private string _dataDir = "";
     // Startup splash must stay up at least this long — the app loads so fast
     // on modern hardware that it used to flash and disappear before the user
-    // could read the logo/tagline.
-    private static readonly TimeSpan MinSplashDuration = TimeSpan.FromSeconds(1);
+    // could read the logo/tagline. (v1: 1s — real-machine feedback said even
+    // that read as "too fast"; bumped to 3s.)
+    private static readonly TimeSpan MinSplashDuration = TimeSpan.FromSeconds(3);
     private readonly Stopwatch _splashStopwatch = Stopwatch.StartNew();
     private DispatcherTimer? _zoomIndicatorTimer;
+    private DispatcherTimer? _zoomPollTimer;
+    private double _lastKnownZoomFactor = 1.0;
 
     public MainWindow()
     {
@@ -124,14 +127,26 @@ public partial class MainWindow : Window
 
         // Ctrl+マウスホイール／Ctrl+ +/- でのズーム操作に対して、現在の倍率(%)を
         // 右下に数秒間だけ表示する（何%か分からない、という実機フィードバック対応）。
-        Browser.ZoomFactorChanged += Browser_ZoomFactorChanged;
+        // WPF WebView2の ZoomFactorChanged イベントはCtrl+ホイールでのユーザー
+        // 操作では発火しないことがあるため、ZoomFactor を短間隔でポーリングして
+        // 変化を検知する（多少の遅延は数秒表示という要件上まったく問題にならない）。
+        _lastKnownZoomFactor = Browser.ZoomFactor;
+        _zoomPollTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(200) };
+        _zoomPollTimer.Tick += (_, _) =>
+        {
+            var current = Browser.ZoomFactor;
+            if (Math.Abs(current - _lastKnownZoomFactor) < 0.001) return;
+            _lastKnownZoomFactor = current;
+            ShowZoomIndicator(current);
+        };
+        _zoomPollTimer.Start();
 
         Browser.CoreWebView2.Navigate("https://appassets.local/index.html");
     }
 
-    private void Browser_ZoomFactorChanged(object? sender, EventArgs e)
+    private void ShowZoomIndicator(double zoomFactor)
     {
-        var percent = (int)Math.Round(Browser.ZoomFactor * 100);
+        var percent = (int)Math.Round(zoomFactor * 100);
         ZoomIndicatorText.Text = $"{percent}%";
         ZoomIndicator.Visibility = Visibility.Visible;
         ZoomIndicator.Opacity = 1;
@@ -194,11 +209,17 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// Asks (once, on first launch) whether to create a Desktop shortcut to
-    /// this exe, then creates it if the user leaves the pre-checked checkbox
-    /// checked. Idempotent — does nothing once already asked, even if the
-    /// user later deletes the shortcut (treated as an intentional choice) or
-    /// declined the first time.
+    /// Asks (once, on first launch of this version's consent flow) whether to
+    /// create a Desktop shortcut to this exe, then creates it if the user
+    /// leaves the pre-checked checkbox checked. Idempotent — does nothing
+    /// once already asked, even if the user later deletes the shortcut
+    /// (treated as an intentional choice) or declined.
+    ///
+    /// Uses a NEW marker filename (.shortcut-prompted-v2, not the old
+    /// .shortcut-created) deliberately: v2.1's shortcut feature created that
+    /// old marker unconditionally on first run, before this consent dialog
+    /// existed, so every install upgrading from v2.1 already had it and the
+    /// dialog would otherwise never appear even once.
     /// </summary>
     private static void CreateDesktopShortcutIfMissing(Window owner)
     {
@@ -208,7 +229,7 @@ public partial class MainWindow : Window
             var shortcutPath = Path.Combine(desktopDir, "Guest Voice Studio.lnk");
             var markerPath = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "GuestVoiceStudio.shortcut-created");
+                "GuestVoiceStudio.shortcut-prompted-v2");
             if (File.Exists(markerPath)) return;
 
             File.WriteAllText(markerPath, DateTime.Now.ToString("O"));
@@ -281,10 +302,79 @@ public partial class MainWindow : Window
             {
                 case "openPath":
                 {
+                    // Previously always replied {ok:true} even when the file
+                    // was missing or had no associated app, which silently
+                    // swallowed failures (e.g. no default .eml handler) —
+                    // the JS side would show a success toast for something
+                    // that never actually opened. Now reports truthfully.
                     var path = root.GetProperty("path").GetString();
-                    if (!string.IsNullOrWhiteSpace(path) && File.Exists(path))
+                    if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
+                    {
+                        Reply(requestId, new { ok = false, error = "file-not-found" });
+                        break;
+                    }
+                    try
+                    {
                         Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
-                    Reply(requestId, new { ok = true });
+                        Reply(requestId, new { ok = true });
+                    }
+                    catch (Exception ex)
+                    {
+                        Reply(requestId, new { ok = false, error = ex.Message });
+                    }
+                    break;
+                }
+                case "openMailDraft":
+                {
+                    // Preferred path: launch Outlook (classic) directly via
+                    // its registered exe with /m (mailto-style subject/body)
+                    // and /a (attach a real file) — this sidesteps whatever
+                    // app (if any) is actually registered as the .eml
+                    // handler, which real-machine testing showed is often
+                    // nothing, or not Outlook, even when Outlook is
+                    // installed and the user's usual mail client.
+                    // Fallback: open the pre-built .eml via file association
+                    // (works for "new Outlook", Windows Mail, etc.).
+                    var subject = root.TryGetProperty("subject", out var sEl) ? sEl.GetString() ?? "" : "";
+                    var body = root.TryGetProperty("body", out var bEl) ? bEl.GetString() ?? "" : "";
+                    var attachmentPath = root.TryGetProperty("attachmentPath", out var aEl) ? aEl.GetString() : null;
+                    var emlPath = root.TryGetProperty("emlPath", out var eEl) ? eEl.GetString() : null;
+
+                    var outlookExe = FindOutlookClassicExePath();
+                    if (outlookExe != null)
+                    {
+                        try
+                        {
+                            var mailto = "mailto:?subject=" + Uri.EscapeDataString(subject) + "&body=" + Uri.EscapeDataString(body);
+                            var args = $"/m \"{mailto}\"";
+                            if (!string.IsNullOrWhiteSpace(attachmentPath) && File.Exists(attachmentPath))
+                                args += $" /a \"{attachmentPath}\"";
+                            Process.Start(new ProcessStartInfo(outlookExe, args) { UseShellExecute = true });
+                            Reply(requestId, new { ok = true, method = "outlook-classic" });
+                            break;
+                        }
+                        catch
+                        {
+                            // fall through to the .eml fallback below
+                        }
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(emlPath) && File.Exists(emlPath))
+                    {
+                        try
+                        {
+                            Process.Start(new ProcessStartInfo(emlPath) { UseShellExecute = true });
+                            Reply(requestId, new { ok = true, method = "eml-association" });
+                        }
+                        catch (Exception ex)
+                        {
+                            Reply(requestId, new { ok = false, error = "no-mail-app: " + ex.Message });
+                        }
+                    }
+                    else
+                    {
+                        Reply(requestId, new { ok = false, error = "outlook-not-found-and-no-eml" });
+                    }
                     break;
                 }
                 case "revealInExplorer":
@@ -313,6 +403,40 @@ public partial class MainWindow : Window
                     var dlg = new OpenFileDialog { Filter = filter };
                     var result = dlg.ShowDialog(this);
                     Reply(requestId, new { ok = result == true, path = result == true ? dlg.FileName : null });
+                    break;
+                }
+                case "pickFolder":
+                {
+                    var title = root.TryGetProperty("title", out var tEl) ? tEl.GetString() : "フォルダを選択してください";
+                    var dlg = new OpenFolderDialog { Title = title, Multiselect = false };
+                    var result = dlg.ShowDialog(this);
+                    Reply(requestId, new { ok = result == true, path = result == true ? dlg.FolderName : null });
+                    break;
+                }
+                case "requestRelocateData":
+                {
+                    // Confirmation ("移動してアプリを再起動しますか？") already
+                    // happened on the JS side. The move itself can't happen
+                    // while this process is running — WebView2's browser
+                    // profile (cookies/localStorage) under _dataDir\WebView2Data
+                    // is actively open — so, like requestUninstall, this hands
+                    // off to a detached helper that waits for us to exit,
+                    // moves everything, updates the locator file, then
+                    // relaunches the app from its new data location.
+                    var newDir = root.GetProperty("newDataDir").GetString();
+                    if (string.IsNullOrWhiteSpace(newDir))
+                    {
+                        Reply(requestId, new { ok = false, error = "no-target-folder" });
+                        break;
+                    }
+                    if (string.Equals(Path.GetFullPath(newDir).TrimEnd('\\'), Path.GetFullPath(_dataDir).TrimEnd('\\'), StringComparison.OrdinalIgnoreCase))
+                    {
+                        Reply(requestId, new { ok = false, error = "same-location" });
+                        break;
+                    }
+                    Reply(requestId, new { ok = true });
+                    await System.Threading.Tasks.Task.Delay(300);
+                    StartRelocateHelperAndExit(newDir);
                     break;
                 }
                 case "printToPdf":
@@ -378,7 +502,13 @@ public partial class MainWindow : Window
         var shortcutPath = Path.Combine(desktopDir, "Guest Voice Studio.lnk");
         var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
         var locatorPath = Path.Combine(localAppData, "GuestVoiceStudio.location");
-        var markerPath = Path.Combine(localAppData, "GuestVoiceStudio.shortcut-created");
+        // Both the legacy (pre-v2.2) and current shortcut-consent marker
+        // filenames — harmless to remove whichever exists.
+        var markerPaths = new[]
+        {
+            Path.Combine(localAppData, "GuestVoiceStudio.shortcut-created"),
+            Path.Combine(localAppData, "GuestVoiceStudio.shortcut-prompted-v2"),
+        };
         var scriptPath = Path.Combine(Path.GetTempPath(), $"gvs_uninstall_{Guid.NewGuid():N}.ps1");
 
         var script = $$"""
@@ -393,8 +523,9 @@ public partial class MainWindow : Window
             }
             $locator = '{{EscapePs(locatorPath)}}'
             if ($locator -and (Test-Path $locator)) { Remove-Item $locator -Force }
-            $marker = '{{EscapePs(markerPath)}}'
-            if ($marker -and (Test-Path $marker)) { Remove-Item $marker -Force }
+            foreach ($marker in @('{{EscapePs(markerPaths[0])}}', '{{EscapePs(markerPaths[1])}}')) {
+              if ($marker -and (Test-Path $marker)) { Remove-Item $marker -Force }
+            }
             $appDir = '{{EscapePs(appDir)}}'
             if ($appDir -and (Test-Path $appDir)) { Remove-Item -LiteralPath $appDir -Recurse -Force }
             Remove-Item -LiteralPath $MyInvocation.MyCommand.Path -Force
@@ -411,7 +542,69 @@ public partial class MainWindow : Window
         Application.Current.Shutdown();
     }
 
+    /// <summary>
+    /// Writes a small PowerShell helper that waits for this process to exit,
+    /// robocopy /MOVE's the entire data folder to newDir (this also removes
+    /// the now-empty old folder), rewrites the locator file to point at the
+    /// new location, relaunches the app, then deletes itself.
+    /// </summary>
+    private void StartRelocateHelperAndExit(string newDir)
+    {
+        var oldDir = _dataDir.TrimEnd('\\');
+        newDir = newDir.TrimEnd('\\');
+        var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        var locatorPath = Path.Combine(localAppData, "GuestVoiceStudio.location");
+        var exePath = Environment.ProcessPath ?? Path.Combine(AppContext.BaseDirectory, "GuestVoiceStudio.exe");
+        var scriptPath = Path.Combine(Path.GetTempPath(), $"gvs_relocate_{Guid.NewGuid():N}.ps1");
+
+        var script = $$"""
+            $ErrorActionPreference = 'SilentlyContinue'
+            try { Wait-Process -Id {{Environment.ProcessId}} -Timeout 30 } catch {}
+            Start-Sleep -Seconds 1
+            $src = '{{EscapePs(oldDir)}}'
+            $dst = '{{EscapePs(newDir)}}'
+            New-Item -ItemType Directory -Path $dst -Force | Out-Null
+            robocopy $src $dst /E /MOVE /NFL /NDL /NJH /NJS /NC /NS /NP | Out-Null
+            Set-Content -LiteralPath '{{EscapePs(locatorPath)}}' -Value $dst -NoNewline -Encoding UTF8
+            Start-Process -FilePath '{{EscapePs(exePath)}}'
+            Remove-Item -LiteralPath $MyInvocation.MyCommand.Path -Force
+            """;
+        File.WriteAllText(scriptPath, script);
+
+        Process.Start(new ProcessStartInfo("powershell.exe",
+            $"-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File \"{scriptPath}\"")
+        {
+            UseShellExecute = true,
+            WindowStyle = ProcessWindowStyle.Hidden,
+        });
+
+        Application.Current.Shutdown();
+    }
+
     private static string EscapePs(string value) => value.Replace("'", "''");
+
+    /// <summary>
+    /// Locates Outlook (classic desktop) via the standard App Paths registry
+    /// key that OUTLOOK.EXE's installer registers — the same mechanism
+    /// Windows' own "Run" dialog uses to resolve "outlook". Returns null if
+    /// Outlook classic isn't installed (e.g. "new Outlook"-only machines),
+    /// in which case the caller falls back to opening an .eml by file
+    /// association.
+    /// </summary>
+    private static string? FindOutlookClassicExePath()
+    {
+        try
+        {
+            using var key = Registry.LocalMachine.OpenSubKey(
+                @"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\OUTLOOK.EXE");
+            var path = key?.GetValue(null) as string;
+            return !string.IsNullOrWhiteSpace(path) && File.Exists(path) ? path : null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
 
     private void Reply(string? requestId, object payload)
     {

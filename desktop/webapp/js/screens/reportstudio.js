@@ -24,7 +24,7 @@ import { computeWordFrequencies } from "../tokenizer.js";
 import { renderWordCloud } from "../components/wordcloud.js";
 import * as analysis from "../analysis.js";
 import { escapeHtml, toast } from "../components/ui.js";
-import { isDesktop, nativeInfo, printToPdf, pickSaveFile, readFileBytes, writeFileBytes, openPath, textToBase64 } from "../native.js";
+import { isDesktop, nativeInfo, printToPdf, pickSaveFile, readFileBytes, writeFileBytes, openMailDraft, textToBase64 } from "../native.js";
 import { buildEml } from "../eml.js";
 
 let cfg;
@@ -122,7 +122,8 @@ function generatePreview(root) {
 
   const brand = db.brand;
   const villageName = db.storeName(db.LOCAL_STORE_ID);
-  const authorOptions = (brand.reportAuthors && brand.reportAuthors.length) ? brand.reportAuthors : [user.name];
+  const hasRegisteredAuthors = !!(brand.reportAuthors && brand.reportAuthors.length);
+  const authorOptions = hasRegisteredAuthors ? brand.reportAuthors : [user.name];
   const wrap = root.querySelector("#previewWrap");
   wrap.innerHTML = `
     <div class="card no-print">
@@ -135,6 +136,8 @@ function generatePreview(root) {
           </select>
         </div>
       </div>
+      ${!hasRegisteredAuthors ? `<p class="hint" style="color:var(--info)">報告者が未登録のため、現在はこのPCの利用者名（${escapeHtml(user.name)}）を表示しています。
+        <a href="#settings">Settings＞基本情報</a> で報告者を登録すると、ここでプルダウンから選べるようになります。</p>` : ""}
       <div class="field"><label>概要（自動生成・編集可）</label><textarea id="summaryEdit" rows="5">${escapeHtml(summaryText)}</textarea></div>
       <button class="btn small" id="applyEdit">プレビューに反映</button>
       <hr class="divider">
@@ -312,6 +315,12 @@ async function sendViaOutlook(wrap) {
   try {
     toast("PDFを生成し、Outlookで開く下書きを作成しています…", "");
     const pdfPath = await ensurePdfForDraft();
+
+    // Outlook (classic) is launched directly with /m (subject/body) and /a
+    // (attach pdfPath) when installed — this is tried first because it
+    // doesn't depend on any file-type association being configured. The
+    // .eml is still built as a fallback for when Outlook classic isn't
+    // installed (e.g. "new Outlook"-only machines, Windows Mail).
     const pdfResult = await readFileBytes(pdfPath);
     if (!pdfResult.ok) throw new Error(pdfResult.error || "PDFの読み込みに失敗しました");
     const eml = buildEml({
@@ -321,8 +330,16 @@ async function sendViaOutlook(wrap) {
     const emlPath = `${nativeInfo.reportsDir}\\${reportFileBaseName()}_${Date.now()}.eml`;
     const writeResult = await writeFileBytes(emlPath, textToBase64(eml));
     if (!writeResult.ok) throw new Error(writeResult.error || "EMLの保存に失敗しました");
-    await openPath(emlPath);
-    logDraft(rec, "eml");
+
+    const result = await openMailDraft({ subject, body, attachmentPath: pdfPath, emlPath });
+    if (!result.ok) {
+      toast(
+        `メールソフトを起動できませんでした。PDFは保存済みです（${pdfPath}）。手動でメールに添付してください。`,
+        "bad"
+      );
+      return;
+    }
+    logDraft(rec, result.method || "eml");
     toast("Outlook（既定のメールソフト）で下書きを開きました。宛先を入力してご確認のうえ送信してください。", "good");
   } catch (err) {
     toast("下書き作成に失敗しました: " + err.message, "bad");

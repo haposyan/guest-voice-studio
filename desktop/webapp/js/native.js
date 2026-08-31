@@ -33,9 +33,16 @@ function callNative(type, payload = {}) {
 }
 
 export function openPath(path) { return callNative("openPath", { path }); }
+// Tries Outlook (classic) directly with subject/body/attachment; falls back
+// to opening emlPath by file association if Outlook classic isn't installed.
+export function openMailDraft({ subject, body, attachmentPath, emlPath }) {
+  return callNative("openMailDraft", { subject, body, attachmentPath, emlPath });
+}
 export function revealInExplorer(path) { return callNative("revealInExplorer", { path }); }
 export function pickSaveFile(suggestedName, filter, initialDirectory) { return callNative("pickSaveFile", { suggestedName, filter, initialDirectory }); }
+export function pickFolder(title) { return callNative("pickFolder", { title }); }
 export function requestUninstall() { return callNative("requestUninstall", {}); }
+export function requestRelocateData(newDataDir) { return callNative("requestRelocateData", { newDataDir }); }
 export function pickOpenFile(filter) { return callNative("pickOpenFile", { filter }); }
 export function printToPdf(path) { return callNative("printToPdf", { path }); }
 export function readFileBytes(path) { return callNative("readFileBytes", { path }); }

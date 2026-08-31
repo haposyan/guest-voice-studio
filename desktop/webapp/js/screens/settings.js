@@ -10,7 +10,7 @@
 
 import { db, DATA_RETENTION_DAYS } from "../db.js";
 import { escapeHtml, toast, confirmDialog, openModal, closeModal } from "../components/ui.js";
-import { isDesktop, nativeInfo, revealInExplorer, pickSaveFile, pickOpenFile, writeFileBytes, readFileBytes, textToBase64, downloadBlob, requestUninstall } from "../native.js";
+import { isDesktop, nativeInfo, revealInExplorer, pickSaveFile, pickOpenFile, pickFolder, writeFileBytes, readFileBytes, textToBase64, downloadBlob, requestUninstall, requestRelocateData } from "../native.js";
 import { encryptBackup, decryptBackup } from "../backup.js";
 
 const TABS = [
@@ -50,9 +50,8 @@ function renderStore(panel, root) {
   panel.innerHTML = `
     <div class="card">
       <div class="card-title"><h3>基本情報</h3></div>
-      <p class="hint">このインストールが担当する村は1つだけです（本部/他拠点機能はv2で廃止）。CSV内の村名表記ゆれは「別名」に登録すると自動的に対応付けられます（MAP-04）。</p>
+      <p class="hint">このインストールが担当する村は1つだけです（本部/他拠点機能はv2で廃止）。</p>
       <div class="field"><label>村名</label><input type="text" id="sName" value="${escapeHtml(s.name)}"></div>
-      <div class="field"><label>別名（表記ゆれ、カンマ区切り）</label><input type="text" id="sAliases" value="${escapeHtml((s.aliases||[]).join(", "))}"></div>
       <button class="btn small primary" id="saveStore">保存</button>
     </div>
     <div class="card">
@@ -70,8 +69,7 @@ function renderStore(panel, root) {
   panel.querySelector("#saveStore").onclick = () => {
     const name = panel.querySelector("#sName").value.trim();
     if (!name) { toast("村名を入力してください", "bad"); return; }
-    const aliases = panel.querySelector("#sAliases").value.split(",").map((a) => a.trim()).filter(Boolean);
-    db.stores = db.stores.map((st) => st.id === db.LOCAL_STORE_ID ? { ...st, name, aliases } : st);
+    db.stores = db.stores.map((st) => st.id === db.LOCAL_STORE_ID ? { ...st, name } : st);
     db.audit("settings_store_update", db.LOCAL_STORE_ID, name);
     toast("保存しました", "good");
     render(root);
@@ -135,6 +133,9 @@ function renderItems(panel, root) {
       db.itemMappings = list;
       db.audit("settings_item_update", id, "");
       toast("保存しました", "good");
+      // 「有効」チェックを外した項目はこの一覧から消えるべきなので再描画する
+      // （以前は再描画していなかったため、無効化しても一覧に残って見えた）。
+      render(root);
     };
   });
   panel.querySelectorAll("[data-del]").forEach((btn) => {
@@ -243,9 +244,14 @@ function renderBackup(panel) {
       <div class="card-title"><h3>バックアップを作成</h3></div>
       <p class="hint">全データ（回答・改善課題・設定など）をパスフレーズで暗号化した1ファイルに書き出します。別PCへ移す場合はこのファイルを使ってください（§7 バックアップ）。</p>
       ${isDesktop ? `<div class="path-box" style="margin-bottom:10px"><span>既定の保存候補フォルダ: ${escapeHtml(nativeInfo.backupsDir || "")}</span><span class="spacer"></span><button class="btn small" id="openBackupsDir">エクスプローラーで開く</button></div>` : ""}
-      <div class="field"><label>パスフレーズ</label><input type="password" id="bkPass1" placeholder="8文字以上"></div>
-      <div class="field"><label>パスフレーズ（確認）</label><input type="password" id="bkPass2"></div>
-      <p class="hint">※パスフレーズは<strong>8文字以上</strong>で設定してください。8文字未満は作成できません。上限はありません。復元時も同じパスフレーズが必要です。</p>
+      <div class="field">
+        <label>パスフレーズ</label><input type="password" id="bkPass1" placeholder="8文字以上">
+        <p class="hint" style="margin-top:4px">※<strong>8文字以上</strong>で設定してください（上限なし）。8文字未満は作成できません。</p>
+      </div>
+      <div class="field">
+        <label>パスフレーズ（確認）</label><input type="password" id="bkPass2">
+        <p class="hint" style="margin-top:4px">※上と同じパスフレーズをもう一度入力してください。</p>
+      </div>
       <button class="btn primary" id="bkExport">バックアップを作成</button>
       <div id="bkExportResult"></div>
     </div>
@@ -259,8 +265,10 @@ function renderBackup(panel) {
         </div>
         ${!isDesktop ? `<input type="file" id="bkFileInput" accept=".gvsbackup,.json" style="margin-top:6px">` : ""}
       </div>
-      <div class="field"><label>パスフレーズ</label><input type="password" id="bkRestorePass"></div>
-      <p class="hint">※作成時に設定した8文字以上のパスフレーズをそのまま入力してください。</p>
+      <div class="field">
+        <label>パスフレーズ</label><input type="password" id="bkRestorePass">
+        <p class="hint" style="margin-top:4px">※作成時に設定した<strong>8文字以上</strong>のパスフレーズをそのまま入力してください。</p>
+      </div>
       <button class="btn danger" id="bkImport">復元する</button>
     </div>
   `;
@@ -363,9 +371,11 @@ function renderBrand(panel) {
       <div class="card-title"><h3>保存先</h3></div>
       ${isDesktop ? `
         <p class="hint" style="margin-bottom:8px">初回起動時に選んだ場所に保存されています（管理者権限は不要／§7 保存先）。</p>
-        <div class="path-box"><span>${escapeHtml(nativeInfo.dataDir || "")}</span><span class="spacer"></span><button class="btn small" id="openDataDir">エクスプローラーで開く</button></div>
-        <p class="hint" style="margin-top:8px">保存先を変更するには、この場所ごとフォルダを移動したうえで、
-        <code>%LOCALAPPDATA%\\GuestVoiceStudio.location</code> というファイルをテキストエディタで開き、新しい保存先のパスに書き換えてください（次回起動時から反映されます）。Dドライブなど別ドライブへの移動も同じ手順で可能です。</p>
+        <div class="path-box"><span>${escapeHtml(nativeInfo.dataDir || "")}</span><span class="spacer"></span>
+          <button class="btn small" id="openDataDir">エクスプローラーで開く</button>
+          <button class="btn small primary" id="relocateDataDir" style="margin-left:6px">保存先を変更…</button>
+        </div>
+        <p class="hint" style="margin-top:8px">「保存先を変更」でDドライブなど別のフォルダを選ぶと、データを新しい場所へ移動したうえでアプリが自動的に再起動します（PC入れ替え時にDドライブだけ持って行きたい、というご要望への対応です）。移動中はアプリを閉じたままにしてください。</p>
       ` : `<p class="hint">ブラウザモードで実行中のため、ブラウザのlocalStorageに保存されています（開発・確認用）。</p>`}
     </div>
     <div class="card">
@@ -409,6 +419,23 @@ function renderBrand(panel) {
   );
   const openDirBtn = panel.querySelector("#openDataDir");
   if (openDirBtn) openDirBtn.onclick = () => revealInExplorer(nativeInfo.dataDir);
+  const relocateBtn = panel.querySelector("#relocateDataDir");
+  if (relocateBtn) relocateBtn.onclick = async () => {
+    const picked = await pickFolder("新しい保存先フォルダを選択してください");
+    if (!picked.ok) return;
+    confirmDialog(
+      `保存先を\n${picked.path}\nに変更します。アプリはデータ移動後に自動的に再起動します。よろしいですか？`,
+      async () => {
+        toast("データを移動しています。アプリが再起動するまでお待ちください…", "");
+        const result = await requestRelocateData(picked.path);
+        if (!result.ok) {
+          const msg = result.error === "same-location" ? "既に同じ場所が選択されています。" : "移動を開始できませんでした: " + (result.error || "");
+          toast(msg, "bad");
+        }
+      },
+      { danger: true, okLabel: "移動して再起動する" }
+    );
+  };
   panel.querySelector("#resetBtn").onclick = () => confirmDialog("すべてのデータを削除して初期状態（初回設定）に戻します。この操作は取り消せません。", () => {
     db.resetAll();
     toast("初期化しました", "good");

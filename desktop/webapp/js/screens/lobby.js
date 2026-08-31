@@ -94,10 +94,12 @@ export function mountLobby(root) {
     <div class="grid cols-2">
       <div class="card">
         <div class="card-title"><h3>増加している不満テーマ</h3></div>
+        <p class="muted" style="font-size:.76rem;margin:-4px 0 8px">不満系の単語のうち、先月より出現率が上がっているものです。</p>
         ${rising.length ? `<div class="tag-list">${rising.map((r) => `<span class="chip" style="border-color:var(--bad)">${escapeHtml(r.word)} <span class="muted">+${r.diff.toFixed(1)}</span></span>`).join("")}</div>` : `<div class="empty-state">先月比で増加しているテーマはありません</div>`}
       </div>
       <div class="card">
         <div class="card-title"><h3>改善傾向のテーマ</h3></div>
+        <p class="muted" style="font-size:.76rem;margin:-4px 0 8px">不満系の単語のうち、先月より出現率が下がっているもの（改善の兆しとして表示）です。</p>
         ${improving.length ? `<div class="tag-list">${improving.map((r) => `<span class="chip" style="border-color:var(--good)">${escapeHtml(r.word)} <span class="muted">${r.diff.toFixed(1)}</span></span>`).join("")}</div>` : `<div class="empty-state">先月比で改善しているテーマはまだありません</div>`}
       </div>
     </div>

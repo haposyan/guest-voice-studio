@@ -113,7 +113,10 @@ export function render() {
 }
 
 window.addEventListener("hashchange", () => {
-  if (db.isConfigured) renderScreen();
+  // Guards a rare race where a hashchange fires before renderShell() has
+  // mounted #screenEn/#screenJa yet (e.g. right after first-run setup
+  // completes) — without this, renderScreen() throws on the null lookup.
+  if (db.isConfigured && document.getElementById("screenEn")) renderScreen();
 });
 
 render();

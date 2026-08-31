@@ -188,6 +188,13 @@ input[type=text], input[type=date], input[type=number], input[type=email], input
   background: #fff; color: var(--ink);
 }
 input:focus, select:focus, textarea:focus { outline: none; border-color: var(--gold); box-shadow: 0 0 0 3px rgba(178,138,74,.15); }
+/* Disabled fields (e.g. Guest Voiceの期間: カスタム以外を選んでいる時) を
+   はっきり編集不可に見えるようにする。デフォルトのブラウザスタイルだけでは
+   「グレーアウトしている雰囲気」が弱い、という実機フィードバック対応。 */
+input:disabled, select:disabled, textarea:disabled {
+  background: var(--ivory-2); color: var(--ink-soft); border-style: dashed;
+  cursor: not-allowed; opacity: .75;
+}
 textarea { resize: vertical; min-height: 70px; }
 .field { margin-bottom: 12px; }
 .field-row { display:flex; gap: 12px; }
