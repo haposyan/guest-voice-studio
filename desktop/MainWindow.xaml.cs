@@ -29,7 +29,7 @@ public partial class MainWindow : Window
     // actually running the build they think they extracted — real-machine
     // feedback repeatedly turned out to be re-testing a stale exe via an old
     // desktop shortcut (see EnsureDesktopShortcut).
-    private const string AppVersion = "2.8.0";
+    private const string AppVersion = "2.9.0";
     private const string AppVersionDate = "2026年9月1日";
 
     private string _dataDir = "";
@@ -269,7 +269,18 @@ public partial class MainWindow : Window
             bool consented;
             if (File.Exists(markerPath))
             {
-                consented = File.ReadAllText(markerPath).Trim() == "true";
+                // v2.4.0–v2.6.0 wrote an ISO timestamp here (unconditionally,
+                // whenever a shortcut had already been created some other
+                // way) — not the literal "true"/"false" this version reads.
+                // Treating anything other than an explicit "false" as
+                // consent (rather than requiring an exact "true" match)
+                // means installs upgrading from those versions keep their
+                // shortcut instead of silently losing it: reading a legacy
+                // timestamp as "declined" was a real bug — a user who
+                // deleted their shortcut to test recreating it found it
+                // never came back, because their marker predated this
+                // format and got misread as "no".
+                consented = File.ReadAllText(markerPath).Trim() != "false";
             }
             else
             {
@@ -383,6 +394,33 @@ public partial class MainWindow : Window
         return result;
     }
 
+    /// <summary>
+    /// Shows a Win32 common file/folder dialog reliably from a WebView2
+    /// message handler. WebView2 hosts its content in a separate child HWND
+    /// (a different process, even) that can still hold input focus/activation
+    /// at the moment the postMessage that triggers this arrives. Calling
+    /// ShowDialog() straight from there sometimes opens the picker without
+    /// activating it — it ends up non-topmost, behind the WebView2 surface,
+    /// which reads to the user as "nothing happens" (a toast fires but no
+    /// picker is visible or clickable). Explicitly activating this window
+    /// first, and yielding once so the WebView2 message pump settles before
+    /// the modal loop takes over, fixes that.
+    /// </summary>
+    private async Task<bool?> ShowNativeDialogAsync(Func<bool?> showDialog)
+    {
+        await Dispatcher.Yield(DispatcherPriority.Background);
+        Activate();
+        Topmost = true;
+        try
+        {
+            return showDialog();
+        }
+        finally
+        {
+            Topmost = false;
+        }
+    }
+
     private async void CoreWebView2_WebMessageReceived(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
     {
         string? requestId = null;
@@ -435,7 +473,7 @@ public partial class MainWindow : Window
                     var dlg = new SaveFileDialog { FileName = suggestedName, Filter = filter };
                     if (!string.IsNullOrWhiteSpace(initialDirectory) && Directory.Exists(initialDirectory))
                         dlg.InitialDirectory = initialDirectory;
-                    var result = dlg.ShowDialog(this);
+                    var result = await ShowNativeDialogAsync(() => dlg.ShowDialog(this));
                     Reply(requestId, new { ok = result == true, path = result == true ? dlg.FileName : null });
                     break;
                 }
@@ -443,7 +481,7 @@ public partial class MainWindow : Window
                 {
                     var filter = root.TryGetProperty("filter", out var f) ? f.GetString() : "All files (*.*)|*.*";
                     var dlg = new OpenFileDialog { Filter = filter };
-                    var result = dlg.ShowDialog(this);
+                    var result = await ShowNativeDialogAsync(() => dlg.ShowDialog(this));
                     Reply(requestId, new { ok = result == true, path = result == true ? dlg.FileName : null });
                     break;
                 }
@@ -451,7 +489,7 @@ public partial class MainWindow : Window
                 {
                     var title = root.TryGetProperty("title", out var tEl) ? tEl.GetString() : "フォルダを選択してください";
                     var dlg = new OpenFolderDialog { Title = title, Multiselect = false };
-                    var result = dlg.ShowDialog(this);
+                    var result = await ShowNativeDialogAsync(() => dlg.ShowDialog(this));
                     Reply(requestId, new { ok = result == true, path = result == true ? dlg.FolderName : null });
                     break;
                 }
