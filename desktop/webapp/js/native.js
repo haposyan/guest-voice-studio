@@ -43,6 +43,18 @@ export function setZoom(factor) { return callNative("setZoom", { factor }); }
 export function stepZoom(direction) { return callNative("stepZoom", { direction }); }
 export function pickOpenFile(filter) { return callNative("pickOpenFile", { filter }); }
 export function printToPdf(path) { return callNative("printToPdf", { path }); }
+
+// Joins a folder and a filename with a single backslash, regardless of
+// whether the folder was typed/stored with a trailing one. Used by the
+// direct-save flows (PDF report, Word usage guide) that write straight to a
+// configured/default folder instead of going through a Save As dialog — see
+// reportstudio.js handlePrint() and settings.js downloadUsageGuide() for why
+// (WebView2-hosted SaveFileDialog proved unreliable across several rounds of
+// real-machine testing: it could open non-topmost, behind the app window,
+// with no visible way for the user to interact with it).
+export function joinPath(dir, filename) {
+  return dir.replace(/[\\/]+$/, "") + "\\" + filename;
+}
 export function readFileBytes(path) { return callNative("readFileBytes", { path }); }
 export function writeFileBytes(path, base64) { return callNative("writeFileBytes", { path, base64 }); }
 

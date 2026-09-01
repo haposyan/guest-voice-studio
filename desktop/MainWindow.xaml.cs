@@ -29,7 +29,7 @@ public partial class MainWindow : Window
     // actually running the build they think they extracted — real-machine
     // feedback repeatedly turned out to be re-testing a stale exe via an old
     // desktop shortcut (see EnsureDesktopShortcut).
-    private const string AppVersion = "2.9.0";
+    private const string AppVersion = "2.10.0";
     private const string AppVersionDate = "2026年9月1日";
 
     private string _dataDir = "";
@@ -459,8 +459,14 @@ public partial class MainWindow : Window
                 }
                 case "revealInExplorer":
                 {
+                    // Accepts either a folder (opens it) or a file (opens its
+                    // parent folder with the file pre-selected/highlighted) —
+                    // used after a direct PDF/Word save so the user can see
+                    // exactly where the file landed without hunting for it.
                     var path = root.GetProperty("path").GetString();
-                    if (!string.IsNullOrWhiteSpace(path) && Directory.Exists(path))
+                    if (!string.IsNullOrWhiteSpace(path) && File.Exists(path))
+                        Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{path}\"") { UseShellExecute = true });
+                    else if (!string.IsNullOrWhiteSpace(path) && Directory.Exists(path))
                         Process.Start(new ProcessStartInfo("explorer.exe", $"\"{path}\"") { UseShellExecute = true });
                     Reply(requestId, new { ok = true });
                     break;

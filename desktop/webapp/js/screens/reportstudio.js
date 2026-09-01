@@ -26,7 +26,7 @@ import { computeWordFrequencies } from "../tokenizer.js";
 import { renderWordCloud } from "../components/wordcloud.js";
 import * as analysis from "../analysis.js";
 import { escapeHtml, toast } from "../components/ui.js";
-import { isDesktop, nativeInfo, printToPdf, pickSaveFile } from "../native.js";
+import { isDesktop, nativeInfo, printToPdf, revealInExplorer, joinPath } from "../native.js";
 
 let cfg;
 let currentReport = null;
@@ -267,6 +267,13 @@ function reportFileBaseName() {
   return `${now.getFullYear()}${pad2(now.getMonth() + 1)}${pad2(now.getDate())}${pad2(now.getHours())}${pad2(now.getMinutes())}GuestVoiceReport`;
 }
 
+// v2.10: 保存の都度「名前を付けて保存」ダイアログを出す方式は、複数ラウンドの
+// 実機テストで「押しても反応しない／選択する方法がない」という報告が続いた
+// （WebView2にホストされたWPFのSaveFileDialogが、アプリのウィンドウの背面に
+// 非アクティブな状態で開いてしまい、事実上操作不能になっていたとみられる）。
+// 致命的な不具合だったため、ダイアログに依存しない方式に変更：設定＞保存先の
+// 「書き出し先フォルダ」（未設定ならReportsフォルダ既定値）へ確認なしで直接
+// 保存し、保存後に自動でエクスプローラーを開いてファイルを選択表示する。
 async function handlePrint(wrap) {
   saveReportRecord();
   if (!isDesktop) {
@@ -274,14 +281,18 @@ async function handlePrint(wrap) {
     return;
   }
   const suggested = reportFileBaseName() + ".pdf";
-  toast("保存先を選択してください…", "");
-  const picked = await pickSaveFile(suggested, "PDF ファイル (*.pdf)|*.pdf", nativeInfo.reportsDir);
-  if (!picked.ok) return;
+  const exportDir = (db.brand.exportDir || nativeInfo.reportsDir || "").trim();
+  if (!exportDir) {
+    toast("保存先フォルダが確認できません。設定画面をご確認ください。", "bad");
+    return;
+  }
+  const path = joinPath(exportDir, suggested);
   toast("PDFを作成しています…", "");
-  const result = await printToPdf(picked.path);
+  const result = await printToPdf(path);
   if (result.ok) {
-    currentReport.lastPdfPath = picked.path;
-    toast(`PDFを保存しました: ${picked.path}`, "good");
+    currentReport.lastPdfPath = path;
+    toast(`PDFを保存しました: ${path}`, "good");
+    revealInExplorer(path);
   } else {
     toast("PDFの作成に失敗しました: " + (result.error || ""), "bad");
   }

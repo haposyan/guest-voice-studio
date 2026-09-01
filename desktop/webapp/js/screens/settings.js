@@ -10,7 +10,7 @@
 
 import { db, DATA_RETENTION_DAYS } from "../db.js";
 import { escapeHtml, toast, confirmDialog, openModal, closeModal } from "../components/ui.js";
-import { isDesktop, nativeInfo, revealInExplorer, pickSaveFile, pickOpenFile, pickFolder, writeFileBytes, readFileBytes, textToBase64, bytesToBase64, downloadBlob, requestUninstall, requestRelocateData } from "../native.js";
+import { isDesktop, nativeInfo, revealInExplorer, pickSaveFile, pickOpenFile, pickFolder, writeFileBytes, readFileBytes, textToBase64, bytesToBase64, downloadBlob, requestUninstall, requestRelocateData, joinPath } from "../native.js";
 import { encryptBackup, decryptBackup } from "../backup.js";
 
 // 除外語タブは初期値では非表示（v2.6）：使う場面を想像しにくい、という
@@ -392,6 +392,21 @@ function renderBrand(panel, root) {
         <p class="hint" style="margin-top:8px">「保存先を変更」でDドライブなど別のフォルダを選ぶと、データを新しい場所へ移動したうえでアプリが自動的に再起動します（PC入れ替え時にDドライブだけ持って行きたい、というご要望への対応です）。移動中はアプリを閉じたままにしてください。</p>
       ` : `<p class="hint">ブラウザモードで実行中のため、ブラウザのlocalStorageに保存されています（開発・確認用）。</p>`}
     </div>
+    ${isDesktop ? `
+    <div class="card">
+      <div class="card-title"><h3>PDF・Wordの書き出し先フォルダ</h3></div>
+      <p class="hint" style="margin-bottom:8px">Report Studioの「PDFとして保存」と、下の「このツールについて」からの仕様書ダウンロードは、保存の都度ダイアログで場所を尋ねず、ここで指定したフォルダへ直接保存されます（未指定の場合はReportsフォルダに保存されます）。保存後は自動でエクスプローラーが開き、ファイルが選択された状態で表示されます。</p>
+      <div class="field">
+        <label>書き出し先フォルダ</label>
+        <div class="row" style="gap:8px">
+          <input type="text" id="bExportDir" value="${escapeHtml(brand.exportDir || "")}" placeholder="${escapeHtml(nativeInfo.reportsDir || "")}（未指定時の既定値）" style="flex:1">
+          <button class="btn small" id="pickExportDir">フォルダを選択…</button>
+          <button class="btn small" id="openExportDir">開く</button>
+        </div>
+        <p class="hint">「フォルダを選択…」で選択ダイアログが開かない場合は、上の欄に直接パスを貼り付けて「保存」してください。</p>
+      </div>
+    </div>
+    ` : ""}
     <div class="card">
       <div class="card-title"><h3>個人情報の保護</h3></div>
       <p class="hint">CSVに含まれるメールアドレス・氏名・電話番号などの列は自動検出し、取り込みません（値を保存しません／§7 個人情報）。</p>
@@ -416,11 +431,13 @@ function renderBrand(panel, root) {
     <button class="btn primary" id="saveBrand" style="margin-top:4px">保存</button>
   `;
   panel.querySelector("#saveBrand").onclick = () => {
+    const exportDirEl = panel.querySelector("#bExportDir");
     db.brand = {
       ...db.brand,
       company: panel.querySelector("#bCompany").value.trim() || BRAND_COMPANY_DEFAULT,
       showEffectConfirm: panel.querySelector("#bShowEffect").checked,
       showExcludedWordsTab: panel.querySelector("#bShowWordsTab").checked,
+      exportDir: exportDirEl ? exportDirEl.value.trim() : (db.brand.exportDir || ""),
     };
     db.audit("settings_brand_update", "brand", "");
     toast("保存しました", "good");
@@ -436,6 +453,17 @@ function renderBrand(panel, root) {
   );
   const openDirBtn = panel.querySelector("#openDataDir");
   if (openDirBtn) openDirBtn.onclick = () => revealInExplorer(nativeInfo.dataDir);
+  const pickExportDirBtn = panel.querySelector("#pickExportDir");
+  if (pickExportDirBtn) pickExportDirBtn.onclick = async () => {
+    const picked = await pickFolder("PDF・Wordの書き出し先フォルダを選択してください");
+    if (!picked.ok) return;
+    panel.querySelector("#bExportDir").value = picked.path;
+  };
+  const openExportDirBtn = panel.querySelector("#openExportDir");
+  if (openExportDirBtn) openExportDirBtn.onclick = () => {
+    const dir = panel.querySelector("#bExportDir").value.trim() || nativeInfo.reportsDir;
+    revealInExplorer(dir);
+  };
   const relocateBtn = panel.querySelector("#relocateDataDir");
   if (relocateBtn) relocateBtn.onclick = async () => {
     const picked = await pickFolder("新しい保存先フォルダを選択してください");
@@ -521,6 +549,9 @@ function openAboutModal() {
   } });
 }
 
+// v2.10: PDF保存（reportstudio.js handlePrint）と同じ理由で、都度の
+// 「名前を付けて保存」ダイアログをやめ、設定＞保存先の書き出し先フォルダ
+// （未設定ならReportsフォルダ）へ直接保存する方式に変更。
 async function downloadUsageGuide() {
   try {
     const resp = await fetch("assets/usage_guide.docx");
@@ -528,11 +559,12 @@ async function downloadUsageGuide() {
     const buf = await resp.arrayBuffer();
     const filename = "使い方概要_GuestVoiceStudio.docx";
     if (isDesktop) {
-      const picked = await pickSaveFile(filename, "Word文書 (*.docx)|*.docx");
-      if (!picked.ok) return;
+      const exportDir = (db.brand.exportDir || nativeInfo.reportsDir || "").trim();
+      if (!exportDir) { toast("保存先フォルダが確認できません。設定画面をご確認ください。", "bad"); return; }
+      const path = joinPath(exportDir, filename);
       const base64 = bytesToBase64(new Uint8Array(buf));
-      const result = await writeFileBytes(picked.path, base64);
-      if (result.ok) toast(`保存しました: ${picked.path}`, "good");
+      const result = await writeFileBytes(path, base64);
+      if (result.ok) { toast(`保存しました: ${path}`, "good"); revealInExplorer(path); }
       else toast("保存に失敗しました: " + (result.error || ""), "bad");
     } else {
       downloadBlob(filename, new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" }));

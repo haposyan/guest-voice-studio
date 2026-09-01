@@ -159,12 +159,15 @@ export const db = {
     if (!localStorage.getItem(NS + KEYS.savedViews)) save(KEYS.savedViews, []);
     if (!localStorage.getItem(NS + KEYS.ratingBands)) save(KEYS.ratingBands, seedRatingBands());
     if (!localStorage.getItem(NS + KEYS.brand)) {
-      save(KEYS.brand, { company: "一般財団法人休暇村協会", logo: "", showEffectConfirm: false, reportAuthors: [], showExcludedWordsTab: false });
+      save(KEYS.brand, { company: "一般財団法人休暇村協会", logo: "", showEffectConfirm: false, reportAuthors: [], showExcludedWordsTab: false, exportDir: "" });
     } else {
       // v2.2: keepRawCsv・retentionDays（可変）は廃止（データ保存期間は
       // DATA_RETENTION_DAYS に固定）。showEffectConfirm・reportAuthors・
-      // showExcludedWordsTab は既存インストールに後から追加された
-      // フィールドなので補完する。
+      // showExcludedWordsTab・exportDir は既存インストールに後から追加
+      // されたフィールドなので補完する。exportDir は「PDF/Wordの保存先
+      // フォルダを毎回ダイアログで選ばせず、設定した既定フォルダに直接
+      // 保存する」方式（v2.10）向け — 空文字は「既定のReportsフォルダを
+      // 使う」を意味する。
       const b = load(KEYS.brand, {});
       let changed = false;
       if ("keepRawCsv" in b) { delete b.keepRawCsv; changed = true; }
@@ -172,6 +175,7 @@ export const db = {
       if (!("showEffectConfirm" in b)) { b.showEffectConfirm = false; changed = true; }
       if (!("reportAuthors" in b)) { b.reportAuthors = []; changed = true; }
       if (!("showExcludedWordsTab" in b)) { b.showExcludedWordsTab = false; changed = true; }
+      if (!("exportDir" in b)) { b.exportDir = ""; changed = true; }
       if (changed) save(KEYS.brand, b);
     }
     if (!localStorage.getItem(NS + KEYS.sentimentOverrides)) save(KEYS.sentimentOverrides, {});
