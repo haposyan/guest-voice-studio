@@ -4,10 +4,19 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>お客様の声・改善管理 | Guest Voice Studio</title>
-<link rel="stylesheet" href="css/styles.css">
+<!--
+  ?v=... cache-busts CSS/JS on every release. WebView2's per-user profile
+  (WebView2Data) persists across app versions by design (that's how user
+  data survives an update), but that means its HTTP cache can too — a CSS
+  fix landing in a new release was, on at least one report, still not
+  visible after upgrading, consistent with the previous version's
+  stylesheet being served from cache under the same URL. Bump this string
+  (matches MainWindow.xaml.cs's AppVersion) with every release.
+-->
+<link rel="stylesheet" href="css/styles.css?v=2.6.0">
 </head>
 <body>
 <div id="app"></div>
-<script type="module" src="js/app.js"></script>
+<script type="module" src="js/app.js?v=2.6.0"></script>
 </body>
 </html>

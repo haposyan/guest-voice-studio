@@ -13,10 +13,12 @@ import { escapeHtml, toast, confirmDialog, openModal, closeModal } from "../comp
 import { isDesktop, nativeInfo, revealInExplorer, pickSaveFile, pickOpenFile, pickFolder, writeFileBytes, readFileBytes, textToBase64, downloadBlob, requestUninstall, requestRelocateData } from "../native.js";
 import { encryptBackup, decryptBackup } from "../backup.js";
 
+// 除外語タブは非表示（v2.6）：使う場面を想像しにくい、というフィードバック
+// のため。renderWords() 自体は残しており、必要になれば下のTABS配列に
+// { key: "words", label: "除外語" } を戻すだけで再度表示できる。
 const TABS = [
   { key: "store", label: "基本情報" },
   { key: "items", label: "項目マッピング" },
-  { key: "words", label: "除外語" },
   { key: "backup", label: "バックアップ" },
   { key: "brand", label: "ブランド・保存設定" },
 ];
@@ -385,7 +387,7 @@ function renderBrand(panel) {
     <div class="card">
       <div class="card-title" id="aboutCardTitle" style="cursor:pointer" title="クリックで詳細（バージョン・製作情報・仕様書）を表示">
         <h3>このツールについて <span class="muted" style="font-size:.7rem;font-weight:400">▸ クリックで詳細を表示</span></h3>
-        <span class="badge role">v${escapeHtml(nativeInfo.appVersion || "-")}</span>
+        <span class="badge role">v${escapeHtml(nativeInfo.appVersion || "-")}（${escapeHtml(nativeInfo.appVersionDate || "-")}）</span>
       </div>
       <p class="hint">動作確認の際は、ここに表示されるバージョン番号が最新かご確認ください。古い番号のままの場合は、デスクトップショートカットが古いバージョンを指している可能性があります（ショートカットを削除し、最新版のexeを直接実行し直すと直ります）。</p>
     </div>
@@ -464,10 +466,10 @@ function openAboutModal() {
   openModal(`
     <div class="modal-header"><h3>このツールについて</h3><button data-close>&times;</button></div>
     <div class="field-row">
-      <div class="field"><label>バージョン</label><div><strong>${escapeHtml(nativeInfo.appVersion || "-")}</strong></div></div>
-      <div class="field"><label>製作日</label><div>2026年8月20日</div></div>
+      <div class="field"><label>バージョン</label><div><strong>${escapeHtml(nativeInfo.appVersion || "-")}</strong>（更新日: ${escapeHtml(nativeInfo.appVersionDate || "-")}）</div></div>
+      <div class="field"><label>初回製作日</label><div>2026年8月20日</div></div>
     </div>
-    <p class="hint">アップデート・修正のたびにバージョン番号が上がります。動作確認の際は、この番号が最新かをご確認ください。</p>
+    <p class="hint">アップデート・修正のたびにバージョン番号と更新日が変わります。動作確認の際は、この番号が最新かをご確認ください。</p>
     <hr class="divider">
     <div class="stack" style="max-height:50vh;overflow-y:auto;padding-right:6px">
       <h4>概要</h4>

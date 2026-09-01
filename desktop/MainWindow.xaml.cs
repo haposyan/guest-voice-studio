@@ -1,6 +1,5 @@
 using System.Diagnostics;
 using System.IO;
-using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
@@ -25,12 +24,13 @@ namespace GuestVoiceStudio;
 /// </summary>
 public partial class MainWindow : Window
 {
-    // Bump this with every release. Shown in Settings＞ブランド・保存設定
+    // Bump both with every release. Shown in Settings＞ブランド・保存設定
     // ("このツールについて") so a tester can tell at a glance whether they're
     // actually running the build they think they extracted — real-machine
     // feedback repeatedly turned out to be re-testing a stale exe via an old
     // desktop shortcut (see RefreshDesktopShortcutTarget).
-    private const string AppVersion = "2.5.0";
+    private const string AppVersion = "2.6.0";
+    private const string AppVersionDate = "2026年9月1日";
 
     private string _dataDir = "";
     // Startup splash must stay up at least this long — the app loads so fast
@@ -117,6 +117,7 @@ public partial class MainWindow : Window
             reportsDir = Path.Combine(_dataDir, "Reports"),
             backupsDir = Path.Combine(_dataDir, "Backups"),
             appVersion = AppVersion,
+            appVersionDate = AppVersionDate,
             windowsUserName = Environment.UserName,
         });
         await Browser.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(
@@ -370,52 +371,6 @@ public partial class MainWindow : Window
                     }
                     break;
                 }
-                case "openMailDraft":
-                {
-                    // Preferred path: COM Automation against Outlook.Application
-                    // — CreateItem(olMailItem) + .Display() — the same
-                    // mechanism Outlook add-ins use, and the officially
-                    // supported way to hand Outlook a pre-filled draft. This
-                    // replaced an earlier attempt using the /m /a command-line
-                    // switches, which real-machine testing showed did not
-                    // reliably open Outlook or create a draft at all (Outlook
-                    // silently ignored them in that environment). COM
-                    // automation attaches to an already-running Outlook via
-                    // Marshal.GetActiveObject, or launches a new instance via
-                    // CreateInstance if it isn't running.
-                    // Fallback: open the pre-built .eml via file association
-                    // (works for "new Outlook", Windows Mail, etc., when
-                    // Outlook classic/COM isn't available at all).
-                    var subject = root.TryGetProperty("subject", out var sEl) ? sEl.GetString() ?? "" : "";
-                    var body = root.TryGetProperty("body", out var bEl) ? bEl.GetString() ?? "" : "";
-                    var attachmentPath = root.TryGetProperty("attachmentPath", out var aEl) ? aEl.GetString() : null;
-                    var emlPath = root.TryGetProperty("emlPath", out var eEl) ? eEl.GetString() : null;
-
-                    var comError = TryCreateOutlookDraftViaCom(subject, body, attachmentPath);
-                    if (comError == null)
-                    {
-                        Reply(requestId, new { ok = true, method = "outlook-com" });
-                        break;
-                    }
-
-                    if (!string.IsNullOrWhiteSpace(emlPath) && File.Exists(emlPath))
-                    {
-                        try
-                        {
-                            Process.Start(new ProcessStartInfo(emlPath) { UseShellExecute = true });
-                            Reply(requestId, new { ok = true, method = "eml-association" });
-                        }
-                        catch (Exception ex)
-                        {
-                            Reply(requestId, new { ok = false, error = $"outlook-com-failed({comError}); eml-also-failed: " + ex.Message });
-                        }
-                    }
-                    else
-                    {
-                        Reply(requestId, new { ok = false, error = "outlook-com-failed: " + comError });
-                    }
-                    break;
-                }
                 case "revealInExplorer":
                 {
                     var path = root.GetProperty("path").GetString();
@@ -641,68 +596,6 @@ public partial class MainWindow : Window
     }
 
     private static string EscapePs(string value) => value.Replace("'", "''");
-
-    /// <summary>
-    /// Creates a new Outlook mail item via COM Automation and calls
-    /// .Display() so it opens as a visible, editable compose window (not
-    /// silently saved somewhere) — the officially documented way apps and
-    /// add-ins hand Outlook a pre-filled draft. Returns null on success, or
-    /// an error description on failure (so the caller can fall back to
-    /// opening an .eml by file association).
-    ///
-    /// Superseded the earlier /m /a command-line-switch approach
-    /// (OUTLOOK.EXE /m "mailto:..." /a "path"), which real-machine testing
-    /// showed did not reliably launch Outlook or create any draft at all —
-    /// COM automation is Outlook's primary supported integration surface and
-    /// doesn't depend on undocumented combined command-line switch behavior.
-    ///
-    /// Marshal.GetActiveObject attaches to an Outlook instance that's
-    /// already running (common — many users keep Outlook open all day);
-    /// CreateInstance launches a new one if none is running.
-    /// </summary>
-    [DllImport("ole32.dll")]
-    private static extern int CLSIDFromProgID([MarshalAs(UnmanagedType.LPWStr)] string progId, out Guid clsid);
-
-    [DllImport("oleaut32.dll", PreserveSig = false)]
-    private static extern void GetActiveObject(ref Guid rclsid, IntPtr pvReserved, [MarshalAs(UnmanagedType.IUnknown)] out object ppunk);
-
-    private static string? TryCreateOutlookDraftViaCom(string subject, string body, string? attachmentPath)
-    {
-        try
-        {
-            var outlookType = Type.GetTypeFromProgID("Outlook.Application");
-            if (outlookType == null) return "outlook-not-registered";
-
-            // Marshal.GetActiveObject (the old .NET Framework helper for
-            // this) doesn't exist in .NET (Core) — call the same underlying
-            // OLE API it wrapped directly instead.
-            object outlookApp;
-            try
-            {
-                CLSIDFromProgID("Outlook.Application", out var clsid);
-                GetActiveObject(ref clsid, IntPtr.Zero, out outlookApp);
-            }
-            catch
-            {
-                outlookApp = Activator.CreateInstance(outlookType)!;
-            }
-
-            dynamic app = outlookApp;
-            dynamic mailItem = app.CreateItem(0); // olMailItem
-            mailItem.Subject = subject;
-            mailItem.Body = body;
-            if (!string.IsNullOrWhiteSpace(attachmentPath) && File.Exists(attachmentPath))
-            {
-                mailItem.Attachments.Add(attachmentPath);
-            }
-            mailItem.Display(false);
-            return null;
-        }
-        catch (Exception ex)
-        {
-            return ex.Message;
-        }
-    }
 
     private void Reply(string? requestId, object payload)
     {

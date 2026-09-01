@@ -1,31 +1,32 @@
 // ============================================================================
 // reportstudio.js — "Report Studio｜報告書": build an A4 Japanese PDF report
-// and create an Outlook draft (§4.9, §4.10).
+// (§4.9).
 //
-// v2/desktop: PDF export now uses WebView2's native headless
-// CoreWebView2.PrintToPdfAsync (via js/native.js -> desktop/MainWindow.xaml.cs)
-// instead of the browser print dialog — a real file, no user dialog required
-// beyond choosing where to save it. When not running inside the desktop
-// shell (e.g. this file opened in a plain browser for development), it falls
-// back to window.print() exactly like the original web version did.
+// PDF export uses WebView2's native headless CoreWebView2.PrintToPdfAsync
+// (via js/native.js -> desktop/MainWindow.xaml.cs) instead of the browser
+// print dialog — a real file, no user dialog required beyond choosing where
+// to save it. When not running inside the desktop shell (e.g. this file
+// opened in a plain browser for development), it falls back to
+// window.print() exactly like the original web version did.
 //
-// Outlook integration (§4.10): MAIL-05 fallback is the primary path — an
-// .eml is generated with the PDF actually attached (js/eml.js) and, in the
-// desktop shell, opened with the OS default handler (MAIL-04: if that's
-// Outlook, this hands it a new message). Outside the desktop shell, the
-// mailto: fallback from the original web version is kept (no attachment
-// possible there — the user is told to attach the PDF manually).
+// Outlook integration (§4.10) was removed in v2.6: three different
+// integration approaches (.eml file association, Outlook classic /m /a
+// command-line switches, Outlook COM automation) were each tried across
+// several rounds of real-machine testing and none reliably opened Outlook
+// on the test machine — per explicit direction, this feature was dropped
+// rather than continuing to chase it. The generated PDF (via 🖨 PDFとして保存
+// below) is meant to be attached manually in whatever mail client the user
+// already has open.
 // ============================================================================
 
 import { db } from "../db.js";
-import { allowedStoreIds, can } from "../app.js";
+import { allowedStoreIds } from "../app.js";
 import { filterRecords, computeMetrics, itemBreakdown, periodPreset, delta } from "../analysis.js";
 import { computeWordFrequencies } from "../tokenizer.js";
 import { renderWordCloud } from "../components/wordcloud.js";
 import * as analysis from "../analysis.js";
 import { escapeHtml, toast } from "../components/ui.js";
-import { isDesktop, nativeInfo, printToPdf, pickSaveFile, readFileBytes, writeFileBytes, openMailDraft, textToBase64 } from "../native.js";
-import { buildEml } from "../eml.js";
+import { isDesktop, nativeInfo, printToPdf, pickSaveFile } from "../native.js";
 
 let cfg;
 let currentReport = null;
@@ -148,8 +149,8 @@ function generatePreview(root) {
       </div>
       <div class="row" style="justify-content:flex-end;margin-top:16px;gap:8px">
         <button class="btn gold" id="printBtn">🖨 PDFとして保存</button>
-        ${can("createDraft") ? `<button class="btn primary" id="draftBtn">✉ Outlookで送る</button>` : ""}
       </div>
+      <p class="hint" style="text-align:right;margin-top:6px">保存したPDFは、お使いのメールソフトで手動で添付してお送りください。</p>
     </div>
     <div class="report-page" id="reportPage"></div>
   `;
@@ -158,8 +159,6 @@ function generatePreview(root) {
   wrap.querySelector("#applyEdit").onclick = () => { currentReport.summaryText = wrap.querySelector("#summaryEdit").value; renderReportPage(wrap); };
   wrap.querySelector("#brandAuthor").onchange = (e) => { currentReport.author = e.target.value; renderReportPage(wrap); };
   wrap.querySelector("#printBtn").onclick = () => handlePrint(wrap);
-  const draftBtn = wrap.querySelector("#draftBtn");
-  if (draftBtn) draftBtn.onclick = () => sendViaOutlook(wrap);
 
   currentReport.author = user.name;
   renderReportPage(wrap);
@@ -283,72 +282,3 @@ async function handlePrint(wrap) {
   }
 }
 
-async function ensurePdfForDraft() {
-  if (currentReport.lastPdfPath) return currentReport.lastPdfPath;
-  const path = `${nativeInfo.reportsDir}\\${reportFileBaseName()}_${Date.now()}.pdf`;
-  const result = await printToPdf(path);
-  if (!result.ok) throw new Error(result.error || "PDF生成に失敗しました");
-  currentReport.lastPdfPath = path;
-  return path;
-}
-
-// v2.2: 宛先の事前登録・テンプレート選択は廃止。件名・本文はその場で組み立て、
-// 宛先(To)は空欄のままOutlook等の既定メールソフトを開く（そのまま送信先を
-// 手入力してもらえば十分、という実機フィードバックを反映）。
-function buildSubjectAndBody(rec) {
-  const period = `${rec.periodStart}〜${rec.periodEnd}`;
-  const subject = `【${currentReport.storeNames}】お客様の声 月次報告（${period}）`;
-  const body = `いつもお世話になっております。\n${currentReport.storeNames}の${period}分レポートを添付いたします。\n\n${currentReport.author || ""}`;
-  return { subject, body };
-}
-
-async function sendViaOutlook(wrap) {
-  const rec = currentReport.savedId ? db.reports.find((x) => x.id === currentReport.savedId) : saveReportRecord();
-  const { subject, body } = buildSubjectAndBody(rec);
-  if (!isDesktop) {
-    const mailto = `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body + "\n\n※PDFレポートを手動で添付してください。")}`;
-    window.location.href = mailto;
-    logDraft(rec, "mailto");
-    toast("メール作成画面を開きました。PDFは手動で添付してください。", "good");
-    return;
-  }
-  try {
-    toast("PDFを生成し、Outlookで開く下書きを作成しています…", "");
-    const pdfPath = await ensurePdfForDraft();
-
-    // Outlook (classic) is launched directly with /m (subject/body) and /a
-    // (attach pdfPath) when installed — this is tried first because it
-    // doesn't depend on any file-type association being configured. The
-    // .eml is still built as a fallback for when Outlook classic isn't
-    // installed (e.g. "new Outlook"-only machines, Windows Mail).
-    const pdfResult = await readFileBytes(pdfPath);
-    if (!pdfResult.ok) throw new Error(pdfResult.error || "PDFの読み込みに失敗しました");
-    const eml = buildEml({
-      to: "", cc: "", subject, bodyText: body,
-      attachmentBase64: pdfResult.base64, attachmentName: reportFileBaseName() + ".pdf",
-    });
-    const emlPath = `${nativeInfo.reportsDir}\\${reportFileBaseName()}_${Date.now()}.eml`;
-    const writeResult = await writeFileBytes(emlPath, textToBase64(eml));
-    if (!writeResult.ok) throw new Error(writeResult.error || "EMLの保存に失敗しました");
-
-    const result = await openMailDraft({ subject, body, attachmentPath: pdfPath, emlPath });
-    if (!result.ok) {
-      toast(
-        `メールソフトを起動できませんでした。PDFは保存済みです（${pdfPath}）。手動でメールに添付してください。`,
-        "bad"
-      );
-      return;
-    }
-    logDraft(rec, result.method || "eml");
-    toast("Outlook（既定のメールソフト）で下書きを開きました。宛先を入力してご確認のうえ送信してください。", "good");
-  } catch (err) {
-    toast("下書き作成に失敗しました: " + err.message, "bad");
-  }
-}
-
-function logDraft(rec, method) {
-  const dh = db.draftHistory;
-  dh.unshift({ id: db.uid("draft"), reportId: rec.id, recipientNames: "（宛先は送信時に入力）", createdAt: new Date().toISOString(), user: db.currentUser().name, method });
-  db.draftHistory = dh;
-  db.audit("draft_create", rec.id, "Outlookで送る");
-}

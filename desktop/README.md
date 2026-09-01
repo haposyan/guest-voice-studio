@@ -96,7 +96,7 @@ desktop/
 | `printToPdf` | `CoreWebView2.PrintToPdfAsync` によるネイティブPDF出力（印刷ダイアログ不要） |
 | `readFileBytes` / `writeFileBytes` | ローカルファイルの読み書き（Base64経由） |
 | `pickSaveFile` / `pickOpenFile` | ネイティブのファイル保存/選択ダイアログ |
-| `openPath` | 既定のアプリでファイルを開く（.emlをOutlook等に渡す） |
+| `openPath` | 既定のアプリでファイルを開く |
 | `revealInExplorer` | エクスプローラーでフォルダを開く |
 
 `js/native.js` は `window.__NATIVE__`（デスクトップシェルが起動時に注入）の有無で
@@ -104,18 +104,17 @@ desktop/
 （`../scripts/serve.ps1` 等で）ブラウザ上で動作確認できます**。実際、この試作の大半の
 画面はまずブラウザ上で検証してからデスクトップシェルに統合しました。
 
-### PDF・Outlook連携の実装方針（v2要件との対応）
+### PDF出力の実装方針（v2要件との対応）
 
 - **MAIL-02 / PDF添付**：`CoreWebView2.PrintToPdfAsync` でヘッドレスに実PDFファイルを
-  生成し、そのバイト列を読み込んで `.eml` に直接埋め込みます（ブラウザの印刷ダイアログ
-  に依存しない、Web版からの明確な改善点）。
-- **MAIL-05（必須）**：宛先・件名・本文・PDF添付を含む `.eml` を `webapp/js/eml.js` で
-  RFC5322/MIME準拠で自前生成し保存します。外部ライブラリ不使用。
-- **MAIL-04（推奨）**：生成した `.eml` を既定のメールソフトで自動的に開きます
-  （`openPath`）。Outlookが既定の場合はOutlookが開きますが、**「新規下書きとして編集
-  可能な状態で開く」ことまでは保証していません**（Outlook/Windows Mailの実装依存。
-  多くの場合は閲覧→転送/編集の一手間が必要になる可能性があります。実機での検証を
-  推奨——要確認事項）。
+  生成します（ブラウザの印刷ダイアログに依存しない、Web版からの明確な改善点）。
+  生成したPDFは、利用者が自身のメールソフトで手動で添付して送信する運用です。
+
+**Outlook連携（MAIL-04/05）は v2.6 で廃止しました**：.emlファイルのファイル関連付け
+（openPathで開く）、Outlookクラシックの `/m /a` コマンドライン起動、Outlook COM
+自動化（CreateItem + Display()）の3方式を実機フィードバックのたびに順番に試しましたが、
+どれもテスト環境で確実には動作しませんでした。これ以上の自動連携は見送り、PDF生成まで
+を提供する方針としています（`webapp/js/eml.js` および関連コードは削除済み）。
 
 ## v2で削除された機能（Web版から見た差分）
 
@@ -153,8 +152,6 @@ desktop/
   （`desktop/scripts/fetch_webview2_runtime.ps1` で取得し、`webview2runtime\` として
   exeと同じフォルダに配布します）。そのぶん配布サイズは約800MBになります。
 - **形態素解析なし**：Web版と同様、簡易な語抽出ロジックです（`webapp/js/tokenizer.js`）。
-- **Outlook下書きの正確な起動可否は実機未検証**：クラシックOutlook／新しいOutlook／
-  Windows Mailで挙動が異なる可能性があります（§11 要確認事項「Microsoft 365許可」）。
 - **署名済みインストーラーは未作成**：単一exeの配布までを用意しています。休暇村協会側で
   コード署名・インストーラー化（MSIX等）を行う場合は別途検討が必要です。
 - **この開発環境ではGUIの目視確認ができません**：起動画面・初回設定ダイアログ・

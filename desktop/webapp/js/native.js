@@ -7,7 +7,7 @@
 
 export const isDesktop = !!(window.__NATIVE__ && window.__NATIVE__.isDesktop && window.chrome?.webview);
 
-export const nativeInfo = window.__NATIVE__ || { isDesktop: false, dataDir: null, reportsDir: null, backupsDir: null, appVersion: "browser-dev" };
+export const nativeInfo = window.__NATIVE__ || { isDesktop: false, dataDir: null, reportsDir: null, backupsDir: null, appVersion: "browser-dev", appVersionDate: "-" };
 
 const pending = new Map();
 let reqCounter = 0;
@@ -33,11 +33,6 @@ function callNative(type, payload = {}) {
 }
 
 export function openPath(path) { return callNative("openPath", { path }); }
-// Tries Outlook (classic) directly with subject/body/attachment; falls back
-// to opening emlPath by file association if Outlook classic isn't installed.
-export function openMailDraft({ subject, body, attachmentPath, emlPath }) {
-  return callNative("openMailDraft", { subject, body, attachmentPath, emlPath });
-}
 export function revealInExplorer(path) { return callNative("revealInExplorer", { path }); }
 export function pickSaveFile(suggestedName, filter, initialDirectory) { return callNative("pickSaveFile", { suggestedName, filter, initialDirectory }); }
 export function pickFolder(title) { return callNative("pickFolder", { title }); }
