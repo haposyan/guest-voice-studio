@@ -383,14 +383,11 @@ function renderBrand(panel) {
       <p class="hint">CSVに含まれるメールアドレス・氏名・電話番号などの列は自動検出し、取り込みません（値を保存しません／§7 個人情報）。</p>
     </div>
     <div class="card">
-      <div class="card-title"><h3>このツールについて</h3></div>
-      <div class="field-row">
-        <div class="field"><label>バージョン</label><div>${escapeHtml(nativeInfo.appVersion || "-")}</div></div>
-        <div class="field"><label>製作日</label><div>2026年8月20日</div></div>
-        <div class="field"><label>製作者</label><div>大籠義記</div></div>
+      <div class="card-title" id="aboutCardTitle" style="cursor:pointer" title="クリックで詳細（バージョン・製作情報・仕様書）を表示">
+        <h3>このツールについて <span class="muted" style="font-size:.7rem;font-weight:400">▸ クリックで詳細を表示</span></h3>
+        <span class="badge role">v${escapeHtml(nativeInfo.appVersion || "-")}</span>
       </div>
-      <p class="hint">アップデート・修正のたびにバージョン番号が上がります。動作確認の際は、お使いのビルドがこの番号と一致しているかご確認ください（一致しない場合は、デスクトップショートカットが古いバージョンを指している可能性があります。ショートカットを一度削除し、最新版のexeを直接実行し直すと直ります）。</p>
-      <p class="hint">仕様書・使い方の概要は別途お渡ししている資料をご参照ください。</p>
+      <p class="hint">動作確認の際は、ここに表示されるバージョン番号が最新かご確認ください。古い番号のままの場合は、デスクトップショートカットが古いバージョンを指している可能性があります（ショートカットを削除し、最新版のexeを直接実行し直すと直ります）。</p>
     </div>
     <div class="card">
       <div class="card-title"><h3>試作データのリセット</h3></div>
@@ -454,4 +451,48 @@ function renderBrand(panel) {
     },
     { danger: true, okLabel: "アンインストールする" }
   );
+  const aboutCardTitle = panel.querySelector("#aboutCardTitle");
+  if (aboutCardTitle) aboutCardTitle.onclick = () => openAboutModal();
+}
+
+// ---------------------------------------------------------------------------
+// 「このツールについて」ポップアップ：バージョン・製作情報に加えて、仕様書の
+// 要点をアプリ内に埋め込んで表示する（別ファイルを探さなくても、その場で
+// 概要を確認できるように）。詳細な正式仕様書は別途Wordファイルでお渡しして
+// いるものを参照。
+function openAboutModal() {
+  openModal(`
+    <div class="modal-header"><h3>このツールについて</h3><button data-close>&times;</button></div>
+    <div class="field-row">
+      <div class="field"><label>バージョン</label><div><strong>${escapeHtml(nativeInfo.appVersion || "-")}</strong></div></div>
+      <div class="field"><label>製作日</label><div>2026年8月20日</div></div>
+    </div>
+    <p class="hint">アップデート・修正のたびにバージョン番号が上がります。動作確認の際は、この番号が最新かをご確認ください。</p>
+    <hr class="divider">
+    <div class="stack" style="max-height:50vh;overflow-y:auto;padding-right:6px">
+      <h4>概要</h4>
+      <p>お客様アンケート（5段階評価＋自由記述）のCSVを取り込み、分析・改善課題管理・期間比較・PDF報告書・Outlook連携までを行う、休暇村1拠点専用のローカルWindowsデスクトップアプリです。データはこのPC内にのみ保存され、外部（サーバー・AI・API等）へは一切送信されません。</p>
+      <h4>主な機能</h4>
+      <ul>
+        <li>CSV取込（UTF-8/Shift-JIS自動判定、個人情報列の自動除外）</li>
+        <li>期間・項目・評価帯での絞り込み集計、ワードクラウードによるコメント分析</li>
+        <li>改善課題の登録・進捗管理（Action Board）</li>
+        <li>期間比較（今月対先月など）</li>
+        <li>PDF報告書の作成、Outlookでの送信</li>
+        <li>パスフレーズ暗号化によるバックアップ／復元、保存先の変更（Dドライブ等への移動）</li>
+      </ul>
+      <h4>使い方の流れ</h4>
+      <ol>
+        <li>Import画面で日次のアンケートCSVを取り込む</li>
+        <li>Guest Voice画面で期間・項目を絞り込み、評価やコメントを確認する</li>
+        <li>気になるコメントがあれば、Action Boardで改善課題として登録する</li>
+        <li>対応後、効果を確認する（Settingsでオンにした場合）</li>
+        <li>Report Studioで月次報告書を作成し、Outlookで送る</li>
+      </ol>
+      <h4>データの保存・セキュリティ</h4>
+      <p>全データはこのPCの指定フォルダにのみ保存されます。CSV内のメールアドレス・氏名・電話番号等は自動検出し、取り込み・保存の両方から除外されます。バックアップはパスフレーズ（8文字以上）でAES-256-GCM暗号化されます。</p>
+      <h4>製作情報</h4>
+      <p>製作者：大籠義記<br>本ツールはClaude Codeによる開発作業として作成されました。正式な仕様書（Word）は別途お渡ししています。ご不明点があればお気軽にお尋ねください。</p>
+    </div>
+  `, { width: 620, onMount: (r) => { r.querySelector("[data-close]").onclick = closeModal; } });
 }

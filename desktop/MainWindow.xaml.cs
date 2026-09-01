@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
@@ -29,17 +30,17 @@ public partial class MainWindow : Window
     // actually running the build they think they extracted — real-machine
     // feedback repeatedly turned out to be re-testing a stale exe via an old
     // desktop shortcut (see RefreshDesktopShortcutTarget).
-    private const string AppVersion = "2.4.0";
+    private const string AppVersion = "2.5.0";
 
     private string _dataDir = "";
     // Startup splash must stay up at least this long — the app loads so fast
     // on modern hardware that it used to flash and disappear before the user
-    // could read the logo/tagline. (v1: 1s — real-machine feedback said even
-    // that read as "too fast"; bumped to 3s.)
+    // could read the logo/tagline. (v1: 1s → v2: 3s per feedback; the 3s was
+    // correct all along — a separate bug was cutting the *logo itself* short
+    // and replacing it with a blank white WebView2 surface for the remainder,
+    // see Browser.Visibility handling below.)
     private static readonly TimeSpan MinSplashDuration = TimeSpan.FromSeconds(3);
     private readonly Stopwatch _splashStopwatch = Stopwatch.StartNew();
-    private DispatcherTimer? _zoomPollTimer;
-    private double _lastKnownZoomFactor = 1.0;
     private static readonly double[] ZoomSteps = { 0.5, 0.67, 0.8, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0 };
 
     public MainWindow()
@@ -127,45 +128,31 @@ public partial class MainWindow : Window
             if (!args.IsSuccess) return;
             var remaining = MinSplashDuration - _splashStopwatch.Elapsed;
             if (remaining > TimeSpan.Zero) await System.Threading.Tasks.Task.Delay(remaining);
+            // Reveal Browser and hide the splash together — see the
+            // Visibility="Hidden" comment on Browser in MainWindow.xaml for
+            // why Browser can't just sit behind LoadingOverlay the whole time.
+            Browser.Visibility = Visibility.Visible;
             LoadingOverlay.Visibility = Visibility.Collapsed;
         };
 
         Browser.CoreWebView2.Settings.AreDefaultContextMenusEnabled = true;
         Browser.CoreWebView2.Settings.AreDevToolsEnabled = true; // left on to support field troubleshooting
 
-        // 常時表示の拡大縮小ボタン（－/100%/＋）を配線する。Ctrl+ホイールや
-        // Ctrl+ +/- でズームした場合でも表示している%が追従するよう、
-        // ZoomFactor を短間隔でポーリングしてラベルを更新する（ボタン操作
-        // だけに頼らない — 実機フィードバックで「そもそもCtrl+ホイールを
-        // 知らない人がいる」との指摘があったため、ボタンを常設した）。
-        _lastKnownZoomFactor = Browser.ZoomFactor;
-        UpdateZoomLabel(_lastKnownZoomFactor);
-        _zoomPollTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(200) };
-        _zoomPollTimer.Tick += (_, _) =>
-        {
-            var current = Browser.ZoomFactor;
-            if (Math.Abs(current - _lastKnownZoomFactor) < 0.001) return;
-            _lastKnownZoomFactor = current;
-            UpdateZoomLabel(current);
-        };
-        _zoomPollTimer.Start();
-
-        ZoomInBtn.Click += (_, _) => StepZoom(1);
-        ZoomOutBtn.Click += (_, _) => StepZoom(-1);
-        ZoomResetBtn.Click += (_, _) => SetZoom(1.0);
-
         Browser.CoreWebView2.Navigate("https://appassets.local/index.html");
     }
 
-    private void StepZoom(int direction)
+    /// <summary>
+    /// Steps ZoomFactor to the next value in ZoomSteps in the given
+    /// direction (+1/-1), snapping to the nearest step first if the current
+    /// factor isn't exactly on one (e.g. it was last changed via Ctrl+wheel).
+    /// </summary>
+    private double StepZoom(int direction)
     {
         var current = Browser.ZoomFactor;
         var idx = Array.FindIndex(ZoomSteps, s => Math.Abs(s - current) < 0.01);
         int nextIdx;
         if (idx < 0)
         {
-            // Not sitting exactly on a step (e.g. zoomed via Ctrl+wheel) —
-            // jump to the nearest step in the requested direction.
             nextIdx = direction > 0
                 ? Array.FindIndex(ZoomSteps, s => s > current)
                 : Array.FindLastIndex(ZoomSteps, s => s < current);
@@ -175,19 +162,8 @@ public partial class MainWindow : Window
         {
             nextIdx = Math.Clamp(idx + direction, 0, ZoomSteps.Length - 1);
         }
-        SetZoom(ZoomSteps[nextIdx]);
-    }
-
-    private void SetZoom(double factor)
-    {
-        Browser.ZoomFactor = factor;
-        _lastKnownZoomFactor = factor;
-        UpdateZoomLabel(factor);
-    }
-
-    private void UpdateZoomLabel(double zoomFactor)
-    {
-        ZoomIndicatorText.Text = $"{(int)Math.Round(zoomFactor * 100)}%";
+        Browser.ZoomFactor = ZoomSteps[nextIdx];
+        return Browser.ZoomFactor;
     }
 
     /// <summary>
@@ -396,37 +372,30 @@ public partial class MainWindow : Window
                 }
                 case "openMailDraft":
                 {
-                    // Preferred path: launch Outlook (classic) directly via
-                    // its registered exe with /m (mailto-style subject/body)
-                    // and /a (attach a real file) — this sidesteps whatever
-                    // app (if any) is actually registered as the .eml
-                    // handler, which real-machine testing showed is often
-                    // nothing, or not Outlook, even when Outlook is
-                    // installed and the user's usual mail client.
+                    // Preferred path: COM Automation against Outlook.Application
+                    // — CreateItem(olMailItem) + .Display() — the same
+                    // mechanism Outlook add-ins use, and the officially
+                    // supported way to hand Outlook a pre-filled draft. This
+                    // replaced an earlier attempt using the /m /a command-line
+                    // switches, which real-machine testing showed did not
+                    // reliably open Outlook or create a draft at all (Outlook
+                    // silently ignored them in that environment). COM
+                    // automation attaches to an already-running Outlook via
+                    // Marshal.GetActiveObject, or launches a new instance via
+                    // CreateInstance if it isn't running.
                     // Fallback: open the pre-built .eml via file association
-                    // (works for "new Outlook", Windows Mail, etc.).
+                    // (works for "new Outlook", Windows Mail, etc., when
+                    // Outlook classic/COM isn't available at all).
                     var subject = root.TryGetProperty("subject", out var sEl) ? sEl.GetString() ?? "" : "";
                     var body = root.TryGetProperty("body", out var bEl) ? bEl.GetString() ?? "" : "";
                     var attachmentPath = root.TryGetProperty("attachmentPath", out var aEl) ? aEl.GetString() : null;
                     var emlPath = root.TryGetProperty("emlPath", out var eEl) ? eEl.GetString() : null;
 
-                    var outlookExe = FindOutlookClassicExePath();
-                    if (outlookExe != null)
+                    var comError = TryCreateOutlookDraftViaCom(subject, body, attachmentPath);
+                    if (comError == null)
                     {
-                        try
-                        {
-                            var mailto = "mailto:?subject=" + Uri.EscapeDataString(subject) + "&body=" + Uri.EscapeDataString(body);
-                            var args = $"/m \"{mailto}\"";
-                            if (!string.IsNullOrWhiteSpace(attachmentPath) && File.Exists(attachmentPath))
-                                args += $" /a \"{attachmentPath}\"";
-                            Process.Start(new ProcessStartInfo(outlookExe, args) { UseShellExecute = true });
-                            Reply(requestId, new { ok = true, method = "outlook-classic" });
-                            break;
-                        }
-                        catch
-                        {
-                            // fall through to the .eml fallback below
-                        }
+                        Reply(requestId, new { ok = true, method = "outlook-com" });
+                        break;
                     }
 
                     if (!string.IsNullOrWhiteSpace(emlPath) && File.Exists(emlPath))
@@ -438,12 +407,12 @@ public partial class MainWindow : Window
                         }
                         catch (Exception ex)
                         {
-                            Reply(requestId, new { ok = false, error = "no-mail-app: " + ex.Message });
+                            Reply(requestId, new { ok = false, error = $"outlook-com-failed({comError}); eml-also-failed: " + ex.Message });
                         }
                     }
                     else
                     {
-                        Reply(requestId, new { ok = false, error = "outlook-not-found-and-no-eml" });
+                        Reply(requestId, new { ok = false, error = "outlook-com-failed: " + comError });
                     }
                     break;
                 }
@@ -507,6 +476,26 @@ public partial class MainWindow : Window
                     Reply(requestId, new { ok = true });
                     await System.Threading.Tasks.Task.Delay(300);
                     StartRelocateHelperAndExit(newDir);
+                    break;
+                }
+                case "getZoom":
+                {
+                    Reply(requestId, new { ok = true, factor = Browser.ZoomFactor });
+                    break;
+                }
+                case "setZoom":
+                {
+                    var factor = root.GetProperty("factor").GetDouble();
+                    Browser.ZoomFactor = Math.Clamp(factor, 0.25, 3.0);
+                    Reply(requestId, new { ok = true, factor = Browser.ZoomFactor });
+                    break;
+                }
+                case "stepZoom":
+                {
+                    // direction: +1 to zoom in, -1 to zoom out.
+                    var direction = root.GetProperty("direction").GetInt32();
+                    var newFactor = StepZoom(direction);
+                    Reply(requestId, new { ok = true, factor = newFactor });
                     break;
                 }
                 case "printToPdf":
@@ -654,39 +643,65 @@ public partial class MainWindow : Window
     private static string EscapePs(string value) => value.Replace("'", "''");
 
     /// <summary>
-    /// Locates Outlook (classic desktop) via the standard App Paths registry
-    /// key that OUTLOOK.EXE's installer registers — the same mechanism
-    /// Windows' own "Run" dialog uses to resolve "outlook". Returns null if
-    /// Outlook classic isn't installed (e.g. "new Outlook"-only machines),
-    /// in which case the caller falls back to opening an .eml by file
-    /// association.
+    /// Creates a new Outlook mail item via COM Automation and calls
+    /// .Display() so it opens as a visible, editable compose window (not
+    /// silently saved somewhere) — the officially documented way apps and
+    /// add-ins hand Outlook a pre-filled draft. Returns null on success, or
+    /// an error description on failure (so the caller can fall back to
+    /// opening an .eml by file association).
     ///
-    /// Checks BOTH the 64-bit and 32-bit registry views explicitly: this app
-    /// is built win-x64, and a 64-bit process reading
-    /// HKLM\SOFTWARE\...\App Paths does NOT get redirected to
-    /// WOW6432Node — so on the (still very common) machines where Office/
-    /// Outlook is installed as 32-bit, the plain OpenSubKey lookup used
-    /// before this fix silently found nothing and always fell back to the
-    /// (often unreliable) .eml file-association path.
+    /// Superseded the earlier /m /a command-line-switch approach
+    /// (OUTLOOK.EXE /m "mailto:..." /a "path"), which real-machine testing
+    /// showed did not reliably launch Outlook or create any draft at all —
+    /// COM automation is Outlook's primary supported integration surface and
+    /// doesn't depend on undocumented combined command-line switch behavior.
+    ///
+    /// Marshal.GetActiveObject attaches to an Outlook instance that's
+    /// already running (common — many users keep Outlook open all day);
+    /// CreateInstance launches a new one if none is running.
     /// </summary>
-    private static string? FindOutlookClassicExePath()
+    [DllImport("ole32.dll")]
+    private static extern int CLSIDFromProgID([MarshalAs(UnmanagedType.LPWStr)] string progId, out Guid clsid);
+
+    [DllImport("oleaut32.dll", PreserveSig = false)]
+    private static extern void GetActiveObject(ref Guid rclsid, IntPtr pvReserved, [MarshalAs(UnmanagedType.IUnknown)] out object ppunk);
+
+    private static string? TryCreateOutlookDraftViaCom(string subject, string body, string? attachmentPath)
     {
-        const string subKey = @"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\OUTLOOK.EXE";
-        foreach (var view in new[] { RegistryView.Registry64, RegistryView.Registry32 })
+        try
         {
+            var outlookType = Type.GetTypeFromProgID("Outlook.Application");
+            if (outlookType == null) return "outlook-not-registered";
+
+            // Marshal.GetActiveObject (the old .NET Framework helper for
+            // this) doesn't exist in .NET (Core) — call the same underlying
+            // OLE API it wrapped directly instead.
+            object outlookApp;
             try
             {
-                using var baseKey = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, view);
-                using var key = baseKey.OpenSubKey(subKey);
-                var path = key?.GetValue(null) as string;
-                if (!string.IsNullOrWhiteSpace(path) && File.Exists(path)) return path;
+                CLSIDFromProgID("Outlook.Application", out var clsid);
+                GetActiveObject(ref clsid, IntPtr.Zero, out outlookApp);
             }
             catch
             {
-                // try the other view
+                outlookApp = Activator.CreateInstance(outlookType)!;
             }
+
+            dynamic app = outlookApp;
+            dynamic mailItem = app.CreateItem(0); // olMailItem
+            mailItem.Subject = subject;
+            mailItem.Body = body;
+            if (!string.IsNullOrWhiteSpace(attachmentPath) && File.Exists(attachmentPath))
+            {
+                mailItem.Attachments.Add(attachmentPath);
+            }
+            mailItem.Display(false);
+            return null;
         }
-        return null;
+        catch (Exception ex)
+        {
+            return ex.Message;
+        }
     }
 
     private void Reply(string? requestId, object payload)

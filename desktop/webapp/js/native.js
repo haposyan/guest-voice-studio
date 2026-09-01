@@ -43,6 +43,9 @@ export function pickSaveFile(suggestedName, filter, initialDirectory) { return c
 export function pickFolder(title) { return callNative("pickFolder", { title }); }
 export function requestUninstall() { return callNative("requestUninstall", {}); }
 export function requestRelocateData(newDataDir) { return callNative("requestRelocateData", { newDataDir }); }
+export function getZoom() { return callNative("getZoom", {}); }
+export function setZoom(factor) { return callNative("setZoom", { factor }); }
+export function stepZoom(direction) { return callNative("stepZoom", { direction }); }
 export function pickOpenFile(filter) { return callNative("pickOpenFile", { filter }); }
 export function printToPdf(path) { return callNative("printToPdf", { path }); }
 export function readFileBytes(path) { return callNative("readFileBytes", { path }); }

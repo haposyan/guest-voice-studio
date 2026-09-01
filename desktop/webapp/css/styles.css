@@ -231,6 +231,21 @@ th { color: var(--ink-soft); font-weight: 600; font-size: .76rem; text-transform
 tbody tr:hover { background: var(--ivory-2); }
 .table-wrap { overflow-x: auto; }
 
+/* ---------- Zoom control (persistent, every screen — see app.js) ---------- */
+.zoom-control {
+  position: fixed; right: 20px; bottom: 20px; z-index: 50;
+  display: flex; align-items: center; gap: 2px;
+  background: var(--navy); border-radius: 8px; padding: 4px; opacity: .92;
+  box-shadow: var(--shadow-m);
+}
+.zoom-control button {
+  border: none; background: transparent; color: #fff; cursor: pointer;
+  font-weight: 700; border-radius: 6px; height: 26px;
+}
+.zoom-control button:hover { background: rgba(255,255,255,.15); }
+.zoom-control #zoomOut, .zoom-control #zoomIn { width: 30px; font-size: .9rem; }
+.zoom-control #zoomReset { width: 56px; font-size: .82rem; padding: 0 4px; }
+
 /* ---------- Word cloud ---------- */
 .wordcloud { display:flex; flex-wrap: wrap; gap: 10px 14px; align-items: baseline; padding: 6px 2px; }
 .wc-word {

@@ -11,6 +11,7 @@
 // ============================================================================
 
 import { db } from "./db.js";
+import { isDesktop, getZoom, setZoom, stepZoom } from "./native.js";
 import { mountSetup } from "./screens/setup.js";
 import { mountLobby } from "./screens/lobby.js";
 import { mountGuestVoice } from "./screens/guestvoice.js";
@@ -82,11 +83,49 @@ function renderShell() {
         <div class="content" id="content"></div>
       </div>
     </div>
+    ${isDesktop ? `
+    <!--
+      Always-visible zoom control (－/％/＋), fixed to the viewport so it
+      shows on every screen, not just the startup splash. Deliberately part
+      of the web content itself (not a native WPF overlay): WebView2 is a
+      windowed control and always paints on top of ordinary WPF siblings
+      regardless of z-order (the "airspace" problem), so a native overlay
+      only ever showed on the splash and disappeared the moment real page
+      content took over. Living in the DOM here sidesteps that entirely.
+    -->
+    <div class="zoom-control" id="zoomControl">
+      <button type="button" id="zoomOut" title="縮小">－</button>
+      <button type="button" id="zoomReset" title="クリックで100%に戻す"><span id="zoomLabel">100%</span></button>
+      <button type="button" id="zoomIn" title="拡大">＋</button>
+    </div>
+    ` : ""}
   `;
   app.querySelectorAll("[data-nav]").forEach((btn) => {
     btn.onclick = () => { location.hash = btn.dataset.nav; };
   });
+  if (isDesktop) wireZoomControl();
   renderScreen();
+}
+
+let zoomPollHandle = null;
+function wireZoomControl() {
+  const label = document.getElementById("zoomLabel");
+  const setLabel = (factor) => { if (label) label.textContent = `${Math.round(factor * 100)}%`; };
+  getZoom().then((r) => { if (r.ok) setLabel(r.factor); });
+  document.getElementById("zoomOut").onclick = async () => { const r = await stepZoom(-1); if (r.ok) setLabel(r.factor); };
+  document.getElementById("zoomIn").onclick = async () => { const r = await stepZoom(1); if (r.ok) setLabel(r.factor); };
+  document.getElementById("zoomReset").onclick = async () => { const r = await setZoom(1.0); if (r.ok) setLabel(r.factor); };
+  // Keeps the label in sync when zoom changes via Ctrl+wheel/Ctrl+ +/-
+  // instead of these buttons. Cheap (one native round-trip) and only runs
+  // once — renderShell() only re-runs when the whole app shell remounts.
+  if (!zoomPollHandle) {
+    zoomPollHandle = setInterval(async () => {
+      const el = document.getElementById("zoomLabel");
+      if (!el) return; // shell was replaced (e.g. reset-all) — stop touching stale DOM
+      const r = await getZoom();
+      if (r.ok) setLabel(r.factor);
+    }, 800);
+  }
 }
 
 function renderScreen() {
