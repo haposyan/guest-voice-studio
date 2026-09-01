@@ -5,18 +5,19 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>お客様の声・改善管理 | Guest Voice Studio</title>
 <!--
-  ?v=... cache-busts CSS/JS on every release. WebView2's per-user profile
-  (WebView2Data) persists across app versions by design (that's how user
-  data survives an update), but that means its HTTP cache can too — a CSS
-  fix landing in a new release was, on at least one report, still not
-  visible after upgrading, consistent with the previous version's
-  stylesheet being served from cache under the same URL. Bump this string
-  (matches MainWindow.xaml.cs's AppVersion) with every release.
+  ?v=... belt-and-suspenders cache-busting for the two entry resources
+  (this file's own stylesheet/script tags) on every release. The primary
+  fix for stale CSS/JS after an upgrade is MainWindow.xaml.cs explicitly
+  clearing WebView2's HTTP disk cache on every launch (Profile.
+  ClearBrowsingDataAsync) — that also covers the ES modules these entry
+  files import, which a query string on just these two tags can't reach.
+  Bump this string (matches MainWindow.xaml.cs's AppVersion) with every
+  release anyway, since it's cheap and doesn't hurt.
 -->
-<link rel="stylesheet" href="css/styles.css?v=2.7.0">
+<link rel="stylesheet" href="css/styles.css?v=2.8.0">
 </head>
 <body>
 <div id="app"></div>
-<script type="module" src="js/app.js?v=2.7.0"></script>
+<script type="module" src="js/app.js?v=2.8.0"></script>
 </body>
 </html>

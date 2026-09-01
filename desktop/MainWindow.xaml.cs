@@ -29,7 +29,7 @@ public partial class MainWindow : Window
     // actually running the build they think they extracted — real-machine
     // feedback repeatedly turned out to be re-testing a stale exe via an old
     // desktop shortcut (see EnsureDesktopShortcut).
-    private const string AppVersion = "2.7.0";
+    private const string AppVersion = "2.8.0";
     private const string AppVersionDate = "2026年9月1日";
 
     private string _dataDir = "";
@@ -106,8 +106,31 @@ public partial class MainWindow : Window
         await Browser.EnsureCoreWebView2Async(env);
 
         var webAppDir = Path.Combine(AppContext.BaseDirectory, "webapp");
+        const string virtualHost = "appassets.local";
         Browser.CoreWebView2.SetVirtualHostNameToFolderMapping(
-            "appassets.local", webAppDir, CoreWebView2HostResourceAccessKind.Allow);
+            virtualHost, webAppDir, CoreWebView2HostResourceAccessKind.Allow);
+
+        // Clear ONLY the HTTP disk/memory cache on every launch — not
+        // cookies/localStorage/IndexedDB, which is where all of this app's
+        // actual data (survey records, tasks, settings) lives and must
+        // persist across versions. WebView2's cache otherwise persists
+        // alongside that data (both live under _dataDir\WebView2Data), so a
+        // stylesheet or ES module fetched once under an older version could
+        // keep being served from cache after upgrading even though the
+        // on-disk file had changed — several "still not fixed" reports for
+        // CSS/JS-only changes were consistent with exactly this. (An
+        // earlier attempt at fixing this by versioning the virtual host
+        // name itself was reverted — that would have partitioned
+        // localStorage by origin too, silently wiping all user data on
+        // every version upgrade.)
+        try
+        {
+            await Browser.CoreWebView2.Profile.ClearBrowsingDataAsync(CoreWebView2BrowsingDataKinds.DiskCache);
+        }
+        catch
+        {
+            // Older WebView2 runtime without Profile.ClearBrowsingDataAsync — not fatal.
+        }
 
         var nativeContext = JsonSerializer.Serialize(new
         {
@@ -138,7 +161,7 @@ public partial class MainWindow : Window
         Browser.CoreWebView2.Settings.AreDefaultContextMenusEnabled = true;
         Browser.CoreWebView2.Settings.AreDevToolsEnabled = true; // left on to support field troubleshooting
 
-        Browser.CoreWebView2.Navigate("https://appassets.local/index.html");
+        Browser.CoreWebView2.Navigate($"https://{virtualHost}/index.html?v={Uri.EscapeDataString(AppVersion)}");
     }
 
     /// <summary>
@@ -255,24 +278,71 @@ public partial class MainWindow : Window
             }
             if (!consented) return;
 
+            // Keep a copy of the icon at a FIXED path outside the (movable/
+            // replaceable) extracted app folder, and point the shortcut's
+            // icon at that copy rather than at "exePath,0". Icons resolved
+            // via "exePath,0" go blank/generic the moment that exe path
+            // stops existing — e.g. the user moves the extracted folder
+            // elsewhere — even though TargetPath itself gets self-healed on
+            // the next launch from the new location. Refreshed every launch
+            // so a future icon change still propagates.
+            var stableIconPath = EnsureStableIconFile();
+
             var desktopDir = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
             var shortcutPath = Path.Combine(desktopDir, "Guest Voice Studio.lnk");
             var exePath = Environment.ProcessPath ?? Path.Combine(AppContext.BaseDirectory, "GuestVoiceStudio.exe");
+            var iconLocation = (stableIconPath ?? exePath) + ",0";
 
             dynamic shell = Activator.CreateInstance(Type.GetTypeFromProgID("WScript.Shell")!)!;
             var shortcut = shell.CreateShortcut(shortcutPath);
-            if (File.Exists(shortcutPath) && string.Equals((string)shortcut.TargetPath, exePath, StringComparison.OrdinalIgnoreCase))
-                return; // already correct — avoid rewriting the .lnk on every single launch
+            var alreadyCorrect = File.Exists(shortcutPath)
+                && string.Equals((string)shortcut.TargetPath, exePath, StringComparison.OrdinalIgnoreCase)
+                && string.Equals((string)shortcut.IconLocation, iconLocation, StringComparison.OrdinalIgnoreCase);
+            if (alreadyCorrect) return; // avoid rewriting the .lnk on every single launch
 
             shortcut.TargetPath = exePath;
             shortcut.WorkingDirectory = Path.GetDirectoryName(exePath);
-            shortcut.IconLocation = exePath + ",0";
+            shortcut.IconLocation = iconLocation;
             shortcut.Description = "お客様の声・改善管理（Guest Voice Studio）";
             shortcut.Save();
         }
         catch
         {
             // Best-effort — worst case the shortcut stays stale until next launch.
+        }
+    }
+
+    /// <summary>
+    /// Copies the app icon (embedded as a WPF pack resource, Assets/app.ico)
+    /// out to a fixed, never-relocated path — %LOCALAPPDATA%\GuestVoiceStudio.ico
+    /// — and returns that path, or null if the copy failed.
+    ///
+    /// Deliberately a bare file directly under %LOCALAPPDATA%, NOT inside
+    /// the "GuestVoiceStudio" subfolder — that subfolder is also the
+    /// *default* data root (see ResolveDataRoot), and Settings＞保存先を変更
+    /// moves that entire folder's contents elsewhere. An icon file living
+    /// inside it would get swept away by that move, defeating the point of
+    /// having a location that survives every kind of relocation.
+    /// </summary>
+    private static string? EnsureStableIconFile()
+    {
+        try
+        {
+            var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+            var stableIconPath = Path.Combine(localAppData, "GuestVoiceStudio.ico");
+
+            var resourceInfo = Application.GetResourceStream(new Uri("Assets/app.ico", UriKind.Relative));
+            if (resourceInfo == null) return null;
+            using (var src = resourceInfo.Stream)
+            using (var dst = File.Create(stableIconPath))
+            {
+                src.CopyTo(dst);
+            }
+            return stableIconPath;
+        }
+        catch
+        {
+            return null;
         }
     }
 
@@ -494,6 +564,7 @@ public partial class MainWindow : Window
         var shortcutPath = Path.Combine(desktopDir, "Guest Voice Studio.lnk");
         var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
         var locatorPath = Path.Combine(localAppData, "GuestVoiceStudio.location");
+        var stableIconPath = Path.Combine(localAppData, "GuestVoiceStudio.ico");
         // Both the legacy (pre-v2.2) and current shortcut-consent marker
         // filenames — harmless to remove whichever exists.
         var markerPaths = new[]
@@ -515,6 +586,8 @@ public partial class MainWindow : Window
             }
             $locator = '{{EscapePs(locatorPath)}}'
             if ($locator -and (Test-Path $locator)) { Remove-Item $locator -Force }
+            $stableIcon = '{{EscapePs(stableIconPath)}}'
+            if ($stableIcon -and (Test-Path $stableIcon)) { Remove-Item $stableIcon -Force }
             foreach ($marker in @('{{EscapePs(markerPaths[0])}}', '{{EscapePs(markerPaths[1])}}')) {
               if ($marker -and (Test-Path $marker)) { Remove-Item $marker -Force }
             }
