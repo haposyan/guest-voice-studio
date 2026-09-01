@@ -10,18 +10,23 @@
 
 import { db, DATA_RETENTION_DAYS } from "../db.js";
 import { escapeHtml, toast, confirmDialog, openModal, closeModal } from "../components/ui.js";
-import { isDesktop, nativeInfo, revealInExplorer, pickSaveFile, pickOpenFile, pickFolder, writeFileBytes, readFileBytes, textToBase64, downloadBlob, requestUninstall, requestRelocateData } from "../native.js";
+import { isDesktop, nativeInfo, revealInExplorer, pickSaveFile, pickOpenFile, pickFolder, writeFileBytes, readFileBytes, textToBase64, bytesToBase64, downloadBlob, requestUninstall, requestRelocateData } from "../native.js";
 import { encryptBackup, decryptBackup } from "../backup.js";
 
-// 除外語タブは非表示（v2.6）：使う場面を想像しにくい、というフィードバック
-// のため。renderWords() 自体は残しており、必要になれば下のTABS配列に
-// { key: "words", label: "除外語" } を戻すだけで再度表示できる。
-const TABS = [
+// 除外語タブは初期値では非表示（v2.6）：使う場面を想像しにくい、という
+// フィードバックのため。ブランド・保存設定のトグルで表示・非表示を
+// 切り替えられる（v2.7）。renderWords() 自体は常に残っており、非表示中も
+// 機能自体は失われない。
+const BASE_TABS = [
   { key: "store", label: "基本情報" },
   { key: "items", label: "項目マッピング" },
   { key: "backup", label: "バックアップ" },
   { key: "brand", label: "ブランド・保存設定" },
 ];
+function visibleTabs() {
+  if (!db.brand.showExcludedWordsTab) return BASE_TABS;
+  return [BASE_TABS[0], BASE_TABS[1], { key: "words", label: "除外語" }, ...BASE_TABS.slice(2)];
+}
 let activeTab = "store";
 
 export function mountSettings(root) {
@@ -30,11 +35,13 @@ export function mountSettings(root) {
 }
 
 function render(root) {
+  const tabs = visibleTabs();
+  if (!tabs.some((t) => t.key === activeTab)) activeTab = "store"; // タブがオフになった直後の保険
   root.innerHTML = `
     <div class="row" style="align-items:flex-start;gap:20px">
       <div class="card" style="width:200px;flex:0 0 200px">
         <div class="settings-nav">
-          ${TABS.map((t) => `<button data-tab="${t.key}" class="${activeTab === t.key ? "active" : ""}">${t.label}</button>`).join("")}
+          ${tabs.map((t) => `<button data-tab="${t.key}" class="${activeTab === t.key ? "active" : ""}">${t.label}</button>`).join("")}
         </div>
       </div>
       <div style="flex:1" id="panel"></div>
@@ -345,7 +352,7 @@ function renderBackup(panel) {
 const BRAND_COMPANY_DEFAULT = "一般財団法人休暇村協会";
 let brandCompanyUnlocked = false;
 
-function renderBrand(panel) {
+function renderBrand(panel, root) {
   const brand = db.brand;
   panel.innerHTML = `
     <div class="card">
@@ -363,6 +370,11 @@ function renderBrand(panel) {
       <div class="card-title"><h3>改善課題の効果確認機能</h3></div>
       <div class="field checkbox-row"><input type="checkbox" id="bShowEffect" ${brand.showEffectConfirm ? "checked" : ""}><label style="margin:0">Action Boardに「効果確認」タブ・「効果確認済み」ステータスを表示する</label></div>
       <p class="hint">初期値は非表示です。対応前後の効果測定を実際に使う場合のみオンにしてください。</p>
+    </div>
+    <div class="card">
+      <div class="card-title"><h3>除外語タブの表示</h3></div>
+      <div class="field checkbox-row"><input type="checkbox" id="bShowWordsTab" ${brand.showExcludedWordsTab ? "checked" : ""}><label style="margin:0">Settingsに「除外語」タブを表示する（ワードクラウードの集計から除く単語の管理）</label></div>
+      <p class="hint">初期値は非表示です。機能自体は非表示中も残っており、オンにすればいつでも設定できます。</p>
     </div>
     <div class="card">
       <div class="card-title"><h3>データ保存・取込設定</h3></div>
@@ -408,9 +420,13 @@ function renderBrand(panel) {
       ...db.brand,
       company: panel.querySelector("#bCompany").value.trim() || BRAND_COMPANY_DEFAULT,
       showEffectConfirm: panel.querySelector("#bShowEffect").checked,
+      showExcludedWordsTab: panel.querySelector("#bShowWordsTab").checked,
     };
     db.audit("settings_brand_update", "brand", "");
     toast("保存しました", "good");
+    // 除外語タブの表示・効果確認機能の表示切替はナビゲーション自体に
+    // 影響するため、このパネルだけでなく親のタブ一覧も再描画する。
+    render(root);
   };
   const unlockBtn = panel.querySelector("#unlockCompany");
   if (unlockBtn) unlockBtn.onclick = () => confirmDialog(
@@ -470,17 +486,20 @@ function openAboutModal() {
       <div class="field"><label>初回製作日</label><div>2026年8月20日</div></div>
     </div>
     <p class="hint">アップデート・修正のたびにバージョン番号と更新日が変わります。動作確認の際は、この番号が最新かをご確認ください。</p>
+    <div class="row" style="justify-content:flex-end">
+      <button class="btn small" id="downloadUsageGuide">📄 使い方概要をWordでダウンロード</button>
+    </div>
     <hr class="divider">
     <div class="stack" style="max-height:50vh;overflow-y:auto;padding-right:6px">
       <h4>概要</h4>
-      <p>お客様アンケート（5段階評価＋自由記述）のCSVを取り込み、分析・改善課題管理・期間比較・PDF報告書・Outlook連携までを行う、休暇村1拠点専用のローカルWindowsデスクトップアプリです。データはこのPC内にのみ保存され、外部（サーバー・AI・API等）へは一切送信されません。</p>
+      <p>お客様アンケート（5段階評価＋自由記述）のCSVを取り込み、分析・改善課題管理・期間比較・PDF報告書までを行う、休暇村1拠点専用のローカルWindowsデスクトップアプリです。データはこのPC内にのみ保存され、外部（サーバー・AI・API等）へは一切送信されません。</p>
       <h4>主な機能</h4>
       <ul>
         <li>CSV取込（UTF-8/Shift-JIS自動判定、個人情報列の自動除外）</li>
         <li>期間・項目・評価帯での絞り込み集計、ワードクラウードによるコメント分析</li>
         <li>改善課題の登録・進捗管理（Action Board）</li>
         <li>期間比較（今月対先月など）</li>
-        <li>PDF報告書の作成、Outlookでの送信</li>
+        <li>PDF報告書の作成</li>
         <li>パスフレーズ暗号化によるバックアップ／復元、保存先の変更（Dドライブ等への移動）</li>
       </ul>
       <h4>使い方の流れ</h4>
@@ -489,12 +508,37 @@ function openAboutModal() {
         <li>Guest Voice画面で期間・項目を絞り込み、評価やコメントを確認する</li>
         <li>気になるコメントがあれば、Action Boardで改善課題として登録する</li>
         <li>対応後、効果を確認する（Settingsでオンにした場合）</li>
-        <li>Report Studioで月次報告書を作成し、Outlookで送る</li>
+        <li>Report StudioでPDF報告書を作成し、メールで送る（PDFは手動添付）</li>
       </ol>
       <h4>データの保存・セキュリティ</h4>
       <p>全データはこのPCの指定フォルダにのみ保存されます。CSV内のメールアドレス・氏名・電話番号等は自動検出し、取り込み・保存の両方から除外されます。バックアップはパスフレーズ（8文字以上）でAES-256-GCM暗号化されます。</p>
       <h4>製作情報</h4>
-      <p>製作者：大籠義記<br>本ツールはClaude Codeによる開発作業として作成されました。正式な仕様書（Word）は別途お渡ししています。ご不明点があればお気軽にお尋ねください。</p>
+      <p>製作者：大籠義記<br>本ツールはClaude Codeによる開発作業として作成されました。上のボタンから、この内容をWord文書としてダウンロードできます。ご不明点があればお気軽にお尋ねください。</p>
     </div>
-  `, { width: 620, onMount: (r) => { r.querySelector("[data-close]").onclick = closeModal; } });
+  `, { width: 620, onMount: (r) => {
+    r.querySelector("[data-close]").onclick = closeModal;
+    r.querySelector("#downloadUsageGuide").onclick = () => downloadUsageGuide();
+  } });
+}
+
+async function downloadUsageGuide() {
+  try {
+    const resp = await fetch("assets/usage_guide.docx");
+    if (!resp.ok) throw new Error("ファイルの読み込みに失敗しました");
+    const buf = await resp.arrayBuffer();
+    const filename = "使い方概要_GuestVoiceStudio.docx";
+    if (isDesktop) {
+      const picked = await pickSaveFile(filename, "Word文書 (*.docx)|*.docx");
+      if (!picked.ok) return;
+      const base64 = bytesToBase64(new Uint8Array(buf));
+      const result = await writeFileBytes(picked.path, base64);
+      if (result.ok) toast(`保存しました: ${picked.path}`, "good");
+      else toast("保存に失敗しました: " + (result.error || ""), "bad");
+    } else {
+      downloadBlob(filename, new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" }));
+      toast("ダウンロードしました", "good");
+    }
+  } catch (err) {
+    toast("ダウンロードに失敗しました: " + err.message, "bad");
+  }
 }

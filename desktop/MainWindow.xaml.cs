@@ -28,8 +28,8 @@ public partial class MainWindow : Window
     // ("このツールについて") so a tester can tell at a glance whether they're
     // actually running the build they think they extracted — real-machine
     // feedback repeatedly turned out to be re-testing a stale exe via an old
-    // desktop shortcut (see RefreshDesktopShortcutTarget).
-    private const string AppVersion = "2.6.0";
+    // desktop shortcut (see EnsureDesktopShortcut).
+    private const string AppVersion = "2.7.0";
     private const string AppVersionDate = "2026年9月1日";
 
     private string _dataDir = "";
@@ -53,8 +53,7 @@ public partial class MainWindow : Window
     {
         try
         {
-            CreateDesktopShortcutIfMissing(this);
-            RefreshDesktopShortcutTarget();
+            EnsureDesktopShortcut(this);
             await InitializeWebViewAsync();
         }
         catch (Exception ex)
@@ -214,11 +213,21 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// Asks (once, on first launch of this version's consent flow) whether to
-    /// create a Desktop shortcut to this exe, then creates it if the user
-    /// leaves the pre-checked checkbox checked. Idempotent — does nothing
-    /// once already asked, even if the user later deletes the shortcut
-    /// (treated as an intentional choice) or declined.
+    /// Asks (once ever) whether to create a Desktop shortcut, pre-checked
+    /// checkbox. Then, on THIS and every subsequent launch, makes sure the
+    /// shortcut actually exists and points at the currently-running exe —
+    /// recreating it from scratch if it's missing, not just updating it if
+    /// present.
+    ///
+    /// The "recreate if missing" half matters because moving/renaming the
+    /// extracted app folder in Explorer (e.g. to relocate it, or replacing
+    /// an old version's folder with a new one) breaks the old .lnk outright
+    /// — Windows shows a "this shortcut is no longer valid" error and never
+    /// launches the exe at all, so a "fix it after launch" approach can't
+    /// help; the shortcut has to be rebuilt proactively instead. Consent is
+    /// only asked once — a "no" is remembered (not re-prompted), and a
+    /// "yes" means the shortcut gets silently rebuilt whenever it goes
+    /// missing, without asking again.
     ///
     /// Uses a NEW marker filename (.shortcut-prompted-v2, not the old
     /// .shortcut-created) deliberately: v2.1's shortcut feature created that
@@ -226,65 +235,34 @@ public partial class MainWindow : Window
     /// existed, so every install upgrading from v2.1 already had it and the
     /// dialog would otherwise never appear even once.
     /// </summary>
-    private static void CreateDesktopShortcutIfMissing(Window owner)
+    private static void EnsureDesktopShortcut(Window owner)
     {
         try
         {
-            var desktopDir = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
-            var shortcutPath = Path.Combine(desktopDir, "Guest Voice Studio.lnk");
             var markerPath = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                 "GuestVoiceStudio.shortcut-prompted-v2");
-            if (File.Exists(markerPath)) return;
 
-            File.WriteAllText(markerPath, DateTime.Now.ToString("O"));
-            if (!ShowShortcutConsentDialog(owner)) return;
+            bool consented;
+            if (File.Exists(markerPath))
+            {
+                consented = File.ReadAllText(markerPath).Trim() == "true";
+            }
+            else
+            {
+                consented = ShowShortcutConsentDialog(owner);
+                File.WriteAllText(markerPath, consented ? "true" : "false");
+            }
+            if (!consented) return;
 
-            var exePath = Environment.ProcessPath ?? Path.Combine(AppContext.BaseDirectory, "GuestVoiceStudio.exe");
-
-            dynamic shell = Activator.CreateInstance(Type.GetTypeFromProgID("WScript.Shell")!)!;
-            var shortcut = shell.CreateShortcut(shortcutPath);
-            shortcut.TargetPath = exePath;
-            shortcut.WorkingDirectory = Path.GetDirectoryName(exePath);
-            shortcut.IconLocation = exePath + ",0";
-            shortcut.Description = "お客様の声・改善管理（Guest Voice Studio）";
-            shortcut.Save();
-        }
-        catch
-        {
-            // Best-effort only — a missing shortcut is not fatal, the exe still works directly.
-        }
-    }
-
-    /// <summary>
-    /// Unconditionally rewrites the existing Desktop shortcut's target to
-    /// point at THIS exe, every launch. Cheap (a few ms), and safe to run
-    /// even if the user declined the shortcut originally (no-ops when the
-    /// .lnk doesn't exist).
-    ///
-    /// Why this exists: each release is unzipped to a NEW differently-named
-    /// folder (GuestVoiceStudio-vX.Y.Z-win-x64). A shortcut created once,
-    /// early on, keeps pointing at that old folder's exe forever — so after
-    /// extracting a newer version to a new folder and deleting the old one,
-    /// double-clicking the (now-broken, or worse, still-working-because-the
-    /// -old-folder-wasn't-deleted-yet) old shortcut silently keeps running
-    /// old code. Several "still not fixed" reports turned out to be exactly
-    /// this. Now the shortcut self-heals to the currently-running exe on
-    /// every launch, so as long as it was launched at least once from the
-    /// new folder, the shortcut is corrected from then on.
-    /// </summary>
-    private static void RefreshDesktopShortcutTarget()
-    {
-        try
-        {
             var desktopDir = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
             var shortcutPath = Path.Combine(desktopDir, "Guest Voice Studio.lnk");
-            if (!File.Exists(shortcutPath)) return;
-
             var exePath = Environment.ProcessPath ?? Path.Combine(AppContext.BaseDirectory, "GuestVoiceStudio.exe");
+
             dynamic shell = Activator.CreateInstance(Type.GetTypeFromProgID("WScript.Shell")!)!;
             var shortcut = shell.CreateShortcut(shortcutPath);
-            if (string.Equals((string)shortcut.TargetPath, exePath, StringComparison.OrdinalIgnoreCase)) return;
+            if (File.Exists(shortcutPath) && string.Equals((string)shortcut.TargetPath, exePath, StringComparison.OrdinalIgnoreCase))
+                return; // already correct — avoid rewriting the .lnk on every single launch
 
             shortcut.TargetPath = exePath;
             shortcut.WorkingDirectory = Path.GetDirectoryName(exePath);

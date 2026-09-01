@@ -258,9 +258,13 @@ function saveReportRecord() {
   return rec;
 }
 
+// 例：202609010949GuestVoiceReport（西暦4桁+月2桁+日2桁+時2桁+分2桁、保存を
+// 押した「今」の時刻。以前の「お客様の声_村名_期間」という名前は、同じ条件で
+// 複数回保存すると同名になり上書きされがちだった）。
 function reportFileBaseName() {
-  const r = currentReport;
-  return `お客様の声_${r.storeNames}_${r.cfg.periodStart}_${r.cfg.periodEnd}`.replace(/[\\/:*?"<>|]/g, "_");
+  const now = new Date();
+  const pad2 = (n) => String(n).padStart(2, "0");
+  return `${now.getFullYear()}${pad2(now.getMonth() + 1)}${pad2(now.getDate())}${pad2(now.getHours())}${pad2(now.getMinutes())}GuestVoiceReport`;
 }
 
 async function handlePrint(wrap) {
@@ -270,6 +274,7 @@ async function handlePrint(wrap) {
     return;
   }
   const suggested = reportFileBaseName() + ".pdf";
+  toast("保存先を選択してください…", "");
   const picked = await pickSaveFile(suggested, "PDF ファイル (*.pdf)|*.pdf", nativeInfo.reportsDir);
   if (!picked.ok) return;
   toast("PDFを作成しています…", "");
