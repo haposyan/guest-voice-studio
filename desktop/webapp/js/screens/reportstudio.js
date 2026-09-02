@@ -302,8 +302,18 @@ async function handlePrint(wrap) {
   toast("PDFを作成しています…", "");
   const result = await printToPdfBlob();
   if (!result.ok) {
-    if (result.timedOut) toast("応答がありませんでした（セキュリティソフトがブロックしている可能性があります）", "bad");
-    else toast("PDFの作成に失敗しました: " + (result.error || ""), "bad");
+    // v2.15: the headless PDF path (printToPdfBlob, backed by WebView2's
+    // PrintToPdfStreamAsync) kept failing/timing out across every round of
+    // real-machine testing, unlike window.print() — which opens Chromium's
+    // own interactive print UI, a completely different, far more battle-
+    // tested code path (used by every website's print button) that isn't
+    // driven through this app's own C# host at all. Falling back to it
+    // automatically means the user still gets a working way to make a PDF
+    // (pick "Microsoft Print to PDF" as the printer) even though it now
+    // needs one extra manual step instead of being fully automatic.
+    if (result.timedOut) toast("自動作成がタイムアウトしました。印刷ダイアログを開きます（「Microsoft Print to PDF」を選択して保存してください）…", "");
+    else toast("自動作成に失敗しました。印刷ダイアログを開きます（「Microsoft Print to PDF」を選択して保存してください）…", "");
+    setTimeout(() => window.print(), 1200);
     return;
   }
   try {

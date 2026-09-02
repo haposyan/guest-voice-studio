@@ -29,7 +29,7 @@ public partial class MainWindow : Window
     // actually running the build they think they extracted — real-machine
     // feedback repeatedly turned out to be re-testing a stale exe via an old
     // desktop shortcut (see EnsureDesktopShortcut).
-    private const string AppVersion = "2.14.0";
+    private const string AppVersion = "2.15.0";
     private const string AppVersionDate = "2026年9月2日";
 
     private string _dataDir = "";
@@ -150,6 +150,14 @@ public partial class MainWindow : Window
             reportsDir = Path.Combine(_dataDir, "Reports"),
             backupsDir = Path.Combine(_dataDir, "Backups"),
             bridgeLogPath = Path.Combine(_dataDir, "bridge.log"),
+            // Bundled as a loose Content file (webapp\**\*.*), so this
+            // physically exists on disk right next to the exe with no
+            // download/write step involved at all — see settings.js's
+            // usage-guide section, which shows this path as plain
+            // selectable text (v2.15: every write-based way of getting the
+            // user this file kept failing, but the file was on disk the
+            // whole time).
+            usageGuidePath = Path.Combine(AppContext.BaseDirectory, "webapp", "assets", "usage_guide.docx"),
             appVersion = AppVersion,
             appVersionDate = AppVersionDate,
             windowsUserName = Environment.UserName,
@@ -461,6 +469,14 @@ public partial class MainWindow : Window
     /// </summary>
     private void CoreWebView2_DownloadStarting(object? sender, CoreWebView2DownloadStartingEventArgs e)
     {
+        // Real-machine testing (v2.14) showed the Word download actually
+        // completed — but silently landed in the default Downloads folder
+        // instead of the requested one, meaning the ResultFilePath
+        // assignment below wasn't taking effect. Taking a Deferral is the
+        // documented pattern for mutating these args; without one, a
+        // synchronous handler's changes may not reliably be observed by
+        // WebView2 depending on COM marshaling timing.
+        var deferral = e.GetDeferral();
         try
         {
             var targetPath = _pendingDownloadPath;
@@ -474,7 +490,7 @@ public partial class MainWindow : Window
             e.Handled = true; // no WebView2 "Save As" UI / download bar — we own the UX
 
             var op = e.DownloadOperation;
-            LogBridge($"DownloadStarting: uri={op.Uri}, resultFilePath={e.ResultFilePath}");
+            LogBridge($"DownloadStarting: uri={op.Uri}, requestedPath={targetPath}, resultFilePath={e.ResultFilePath}");
             op.StateChanged += (_, __) =>
             {
                 LogBridge($"DownloadOperation.StateChanged: state={op.State}, interruptReason={op.InterruptReason}, bytesReceived={op.BytesReceived}, path={op.ResultFilePath}");
@@ -483,6 +499,10 @@ public partial class MainWindow : Window
         catch (Exception ex)
         {
             LogBridge($"CoreWebView2_DownloadStarting EXCEPTION: {ex}");
+        }
+        finally
+        {
+            deferral.Complete();
         }
     }
 
@@ -704,6 +724,25 @@ public partial class MainWindow : Window
                     var downloadPath = root.GetProperty("path").GetString();
                     LogBridge($"prepareDownload: path={downloadPath}");
                     _pendingDownloadPath = downloadPath;
+                    // Belt-and-suspenders: also point the whole profile's
+                    // default download folder at the same directory, in
+                    // case CoreWebView2DownloadStartingEventArgs.ResultFilePath
+                    // isn't actually being honored (v2.14 testing showed the
+                    // download completing but landing in the *default*
+                    // Downloads folder instead of the requested one).
+                    try
+                    {
+                        var dir = string.IsNullOrWhiteSpace(downloadPath) ? null : Path.GetDirectoryName(downloadPath);
+                        if (!string.IsNullOrEmpty(dir))
+                        {
+                            Directory.CreateDirectory(dir);
+                            Browser.CoreWebView2.Profile.DefaultDownloadFolderPath = dir;
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        LogBridge($"prepareDownload: DefaultDownloadFolderPath set failed: {ex.Message}");
+                    }
                     Reply(requestId, new { ok = true });
                     break;
                 }

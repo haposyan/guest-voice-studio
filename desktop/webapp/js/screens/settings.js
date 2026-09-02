@@ -540,9 +540,21 @@ function openAboutModal() {
       <div class="field"><label>初回製作日</label><div>2026年8月20日</div></div>
     </div>
     <p class="hint">アップデート・修正のたびにバージョン番号と更新日が変わります。動作確認の際は、この番号が最新かをご確認ください。</p>
+    ${isDesktop ? `
+    <div class="card" style="margin:6px 0">
+      <div class="card-title"><h3 style="font-size:.9rem">📄 使い方概要（Word）</h3></div>
+      <p class="hint">ダウンロードせずとも、インストールフォルダ内に最初から入っています。以下のパスをコピーしてエクスプローラーのアドレス欄に貼り付けても開けます。</p>
+      <div class="path-box"><span style="user-select:text">${escapeHtml(nativeInfo.usageGuidePath || "")}</span></div>
+      <div class="row" style="gap:8px;margin-top:8px">
+        <button class="btn small" id="openUsageGuideFile">エクスプローラーで開く</button>
+        <button class="btn small" id="downloadUsageGuide">ダウンロードで保存し直す</button>
+      </div>
+    </div>
+    ` : `
     <div class="row" style="justify-content:flex-end">
       <button class="btn small" id="downloadUsageGuide">📄 使い方概要をWordでダウンロード</button>
     </div>
+    `}
     <hr class="divider">
     <div class="stack" style="max-height:50vh;overflow-y:auto;padding-right:6px">
       <h4>概要</h4>
@@ -567,11 +579,13 @@ function openAboutModal() {
       <h4>データの保存・セキュリティ</h4>
       <p>全データはこのPCの指定フォルダにのみ保存されます。CSV内のメールアドレス・氏名・電話番号等は自動検出し、取り込み・保存の両方から除外されます。バックアップはパスフレーズ（8文字以上）でAES-256-GCM暗号化されます。</p>
       <h4>製作情報</h4>
-      <p>製作者：大籠義記<br>本ツールはClaude Codeによる開発作業として作成されました。上のボタンから、この内容をWord文書としてダウンロードできます。ご不明点があればお気軽にお尋ねください。</p>
+      <p>製作者：大籠義記<br>本ツールはClaude Codeによる開発作業として作成されました。上の「使い方概要」から、この内容をWord文書として確認できます。ご不明点があればお気軽にお尋ねください。</p>
     </div>
   `, { width: 620, onMount: (r) => {
     r.querySelector("[data-close]").onclick = closeModal;
     r.querySelector("#downloadUsageGuide").onclick = () => downloadUsageGuide();
+    const openUsageBtn = r.querySelector("#openUsageGuideFile");
+    if (openUsageBtn) openUsageBtn.onclick = () => revealInExplorerToast(nativeInfo.usageGuidePath);
   } });
 }
 
