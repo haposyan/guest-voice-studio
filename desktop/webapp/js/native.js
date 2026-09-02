@@ -30,7 +30,7 @@ if (isDesktop) {
 // .NET's own try/catch never sees, so the C# side's own Reply() never fires
 // either. Previously that left the JS Promise pending forever — the button
 // just "didn't respond" with no way to tell hang-from-block-from-bug. Every
-// call now times out on its own after 10s so the caller always gets an
+// call now times out on its own after 5s so the caller always gets an
 // answer, even if that answer is "timeout".
 function callNative(type, payload = {}) {
   if (!isDesktop) return Promise.resolve({ ok: false, error: "not-desktop" });
@@ -41,7 +41,7 @@ function callNative(type, payload = {}) {
         pending.delete(requestId);
         resolve({ ok: false, error: "timeout", timedOut: true });
       }
-    }, 10000);
+    }, 5000);
     pending.set(requestId, (data) => { clearTimeout(timer); resolve(data); });
     window.chrome.webview.postMessage(JSON.stringify({ type, requestId, ...payload }));
   });
@@ -75,6 +75,8 @@ export function setZoom(factor) { return callNative("setZoom", { factor }); }
 export function stepZoom(direction) { return callNative("stepZoom", { direction }); }
 export function pickOpenFile(filter) { return callNative("pickOpenFile", { filter }); }
 export function printToPdf(path) { return callNative("printToPdf", { path }); }
+export function printToPdfBlob() { return callNative("printToPdfBlob", {}); }
+export function prepareDownload(path) { return callNative("prepareDownload", { path }); }
 
 // Joins a folder and a filename with a single backslash, regardless of
 // whether the folder was typed/stored with a trailing one. Used by the
@@ -123,4 +125,19 @@ export function downloadBlob(filename, blob) {
   a.click();
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 4000);
+}
+
+// v2.14: like downloadBlob, but on desktop routes the actual disk write
+// through WebView2's own download manager at an exact path we choose,
+// instead of our own File.WriteAllBytes — see the _pendingDownloadPath
+// comment in MainWindow.xaml.cs for why. On desktop this needs the
+// destination path prepared on the C# side (prepareDownload) *before* the
+// click that starts the download, so this is async even though downloadBlob
+// itself is fire-and-forget.
+export async function saveBlobToPath(path, blob) {
+  if (isDesktop) {
+    await prepareDownload(path);
+  }
+  const filename = path.split(/[\\/]/).pop() || "download";
+  downloadBlob(filename, blob);
 }

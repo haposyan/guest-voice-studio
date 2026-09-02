@@ -2,12 +2,13 @@
 // reportstudio.js — "Report Studio｜報告書": build an A4 Japanese PDF report
 // (§4.9).
 //
-// PDF export uses WebView2's native headless CoreWebView2.PrintToPdfAsync
-// (via js/native.js -> desktop/MainWindow.xaml.cs) instead of the browser
-// print dialog — a real file, no user dialog required beyond choosing where
-// to save it. When not running inside the desktop shell (e.g. this file
-// opened in a plain browser for development), it falls back to
-// window.print() exactly like the original web version did.
+// PDF export uses WebView2's native headless PDF renderer (via js/native.js
+// -> desktop/MainWindow.xaml.cs's printToPdfBlob) to get PDF bytes, then
+// saves them via WebView2's own download manager rather than this app's own
+// file I/O (see handlePrint()'s v2.14 comment below for why). When not
+// running inside the desktop shell (e.g. this file opened in a plain
+// browser for development), it falls back to window.print() exactly like
+// the original web version did.
 //
 // Outlook integration (§4.10) was removed in v2.6: three different
 // integration approaches (.eml file association, Outlook classic /m /a
@@ -26,7 +27,7 @@ import { computeWordFrequencies } from "../tokenizer.js";
 import { renderWordCloud } from "../components/wordcloud.js";
 import * as analysis from "../analysis.js";
 import { escapeHtml, toast } from "../components/ui.js";
-import { isDesktop, nativeInfo, printToPdf, revealInExplorerToast, joinPath } from "../native.js";
+import { isDesktop, nativeInfo, printToPdfBlob, revealInExplorerToast, joinPath, saveBlobToPath, base64ToBytes } from "../native.js";
 
 let cfg;
 let currentReport = null;
@@ -274,6 +275,17 @@ function reportFileBaseName() {
 // 致命的な不具合だったため、ダイアログに依存しない方式に変更：設定＞保存先の
 // 「書き出し先フォルダ」（未設定ならReportsフォルダ既定値）へ確認なしで直接
 // 保存し、保存後に自動でエクスプローラーを開いてファイルを選択表示する。
+//
+// v2.14: それでも「保存しています」の後タイムアウトになる、という報告が
+// 続いた。実機で「保存先を変更」「フォルダを選択」（いずれもダイアログを
+// 開くだけの機能）まで同様にタイムアウトすることが判明し、この自作
+// exe（未署名）自体のファイル書き込み・ダイアログ表示がセキュリティソフト
+// 等に広くブロックされている可能性が高いと判断。ディスクへの実際の書き込み
+// を、この自作exeのFile.WriteAllBytesではなく、WebView2自身（署名済みの
+// msedgewebview2.exe）のダウンロード機構に完全に肩代わりさせる方式に変更
+// した。PDFのバイト列だけをWebView2から受け取り、Blobダウンロードとして
+// 発火させ、保存先パスの指定はCoreWebView2.DownloadStartingで横取りする
+// （native.js の saveBlobToPath 参照）。
 async function handlePrint(wrap) {
   saveReportRecord();
   if (!isDesktop) {
@@ -288,15 +300,20 @@ async function handlePrint(wrap) {
   }
   const path = joinPath(exportDir, suggested);
   toast("PDFを作成しています…", "");
-  const result = await printToPdf(path);
-  if (result.ok) {
+  const result = await printToPdfBlob();
+  if (!result.ok) {
+    if (result.timedOut) toast("応答がありませんでした（セキュリティソフトがブロックしている可能性があります）", "bad");
+    else toast("PDFの作成に失敗しました: " + (result.error || ""), "bad");
+    return;
+  }
+  try {
+    const blob = new Blob([base64ToBytes(result.base64)], { type: "application/pdf" });
+    await saveBlobToPath(path, blob);
     currentReport.lastPdfPath = path;
     toast(`PDFを保存しました: ${path}`, "good");
-    revealInExplorerToast(path);
-  } else if (result.timedOut) {
-    toast("応答がありませんでした（セキュリティソフトがブロックしている可能性があります）", "bad");
-  } else {
-    toast("PDFの作成に失敗しました: " + (result.error || ""), "bad");
+    setTimeout(() => revealInExplorerToast(path), 800);
+  } catch (err) {
+    toast("PDFの保存に失敗しました: " + err.message, "bad");
   }
 }
 

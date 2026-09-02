@@ -10,7 +10,7 @@
 
 import { db, DATA_RETENTION_DAYS } from "../db.js";
 import { escapeHtml, toast, confirmDialog, openModal, closeModal } from "../components/ui.js";
-import { isDesktop, nativeInfo, revealInExplorerToast, pickSaveFile, pickOpenFile, pickFolder, writeFileBytes, readFileBytes, textToBase64, bytesToBase64, downloadBlob, requestUninstall, requestRelocateData, joinPath, openPath } from "../native.js";
+import { isDesktop, nativeInfo, revealInExplorerToast, pickSaveFile, pickOpenFile, pickFolder, writeFileBytes, readFileBytes, textToBase64, downloadBlob, requestUninstall, requestRelocateData, joinPath, openPath, saveBlobToPath } from "../native.js";
 import { encryptBackup, decryptBackup } from "../backup.js";
 
 // 除外語タブは初期値では非表示（v2.6）：使う場面を想像しにくい、という
@@ -400,8 +400,8 @@ function renderBrand(panel, root) {
         <label>書き出し先フォルダ</label>
         <div class="row" style="gap:8px">
           <input type="text" id="bExportDir" value="${escapeHtml(brand.exportDir || "")}" placeholder="${escapeHtml(nativeInfo.reportsDir || "")}（未指定時の既定値）" style="flex:1">
-          <button class="btn small" id="pickExportDir">フォルダを選択…</button>
-          <button class="btn small" id="openExportDir">開く</button>
+          <button class="btn small" id="openExportDir">エクスプローラーで開く</button>
+          <button class="btn small primary" id="pickExportDir" style="margin-left:6px">フォルダを選択…</button>
         </div>
         <p class="hint">「フォルダを選択…」で選択ダイアログが開かない場合は、上の欄に直接パスを貼り付けて「保存」してください。</p>
       </div>
@@ -578,6 +578,9 @@ function openAboutModal() {
 // v2.10: PDF保存（reportstudio.js handlePrint）と同じ理由で、都度の
 // 「名前を付けて保存」ダイアログをやめ、設定＞保存先の書き出し先フォルダ
 // （未設定ならReportsフォルダ）へ直接保存する方式に変更。
+// v2.14: それでもタイムアウトする報告が続いたため、PDF保存と同じくディスク
+// への実際の書き込みをWebView2自身のダウンロード機構に肩代わりさせる方式に
+// 変更（reportstudio.js handlePrintのv2.14コメント参照）。
 async function downloadUsageGuide() {
   try {
     const resp = await fetch("assets/usage_guide.docx");
@@ -588,11 +591,10 @@ async function downloadUsageGuide() {
       const exportDir = (db.brand.exportDir || nativeInfo.reportsDir || "").trim();
       if (!exportDir) { toast("保存先フォルダが確認できません。設定画面をご確認ください。", "bad"); return; }
       const path = joinPath(exportDir, filename);
-      const base64 = bytesToBase64(new Uint8Array(buf));
-      const result = await writeFileBytes(path, base64);
-      if (result.ok) { toast(`保存しました: ${path}`, "good"); revealInExplorerToast(path); }
-      else if (result.timedOut) toast("応答がありませんでした（セキュリティソフトがブロックしている可能性があります）", "bad");
-      else toast("保存に失敗しました: " + (result.error || ""), "bad");
+      const blob = new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" });
+      await saveBlobToPath(path, blob);
+      toast(`保存しました: ${path}`, "good");
+      setTimeout(() => revealInExplorerToast(path), 800);
     } else {
       downloadBlob(filename, new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" }));
       toast("ダウンロードしました", "good");

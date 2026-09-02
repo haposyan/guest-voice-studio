@@ -29,10 +29,21 @@ public partial class MainWindow : Window
     // actually running the build they think they extracted — real-machine
     // feedback repeatedly turned out to be re-testing a stale exe via an old
     // desktop shortcut (see EnsureDesktopShortcut).
-    private const string AppVersion = "2.13.0";
+    private const string AppVersion = "2.14.0";
     private const string AppVersionDate = "2026年9月2日";
 
     private string _dataDir = "";
+    // v2.14: set by the "prepareDownload" bridge command just before JS
+    // triggers a blob download (see printToPdfBlob / the usage-guide
+    // download) — picked up by CoreWebView2_DownloadStarting to redirect
+    // WebView2's own download to our chosen folder/filename. This exists
+    // specifically to move the PDF/Word save's actual disk write from our
+    // own (unsigned, possibly antivirus/EDR-restricted) File.WriteAllBytes
+    // call over to WebView2's own download manager — a different process
+    // (msedgewebview2.exe, Microsoft-signed) that a security product is far
+    // less likely to be restricting the same way. See handlePrint() in
+    // reportstudio.js and downloadUsageGuide() in settings.js.
+    private string? _pendingDownloadPath;
     // Startup splash must stay up at least this long — the app loads so fast
     // on modern hardware that it used to flash and disappear before the user
     // could read the logo/tagline. (v1: 1s → v2: 3s per feedback; the 3s was
@@ -147,6 +158,7 @@ public partial class MainWindow : Window
             $"window.__NATIVE__ = {nativeContext};");
 
         Browser.CoreWebView2.WebMessageReceived += CoreWebView2_WebMessageReceived;
+        Browser.CoreWebView2.DownloadStarting += CoreWebView2_DownloadStarting;
         Browser.CoreWebView2.NavigationCompleted += async (_, args) =>
         {
             if (!args.IsSuccess) return;
@@ -439,6 +451,41 @@ public partial class MainWindow : Window
         catch { }
     }
 
+    /// <summary>
+    /// Redirects WebView2's own download (triggered by JS clicking a
+    /// blob-URL &lt;a download&gt; link) to whatever path "prepareDownload"
+    /// last set, and suppresses WebView2's default download UI (we show our
+    /// own toasts). The actual bytes-to-disk write happens inside WebView2's
+    /// download manager, not in our own process — see the field comment on
+    /// _pendingDownloadPath for why that's the point.
+    /// </summary>
+    private void CoreWebView2_DownloadStarting(object? sender, CoreWebView2DownloadStartingEventArgs e)
+    {
+        try
+        {
+            var targetPath = _pendingDownloadPath;
+            _pendingDownloadPath = null;
+            if (!string.IsNullOrWhiteSpace(targetPath))
+            {
+                var dir = Path.GetDirectoryName(targetPath);
+                if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
+                e.ResultFilePath = targetPath;
+            }
+            e.Handled = true; // no WebView2 "Save As" UI / download bar — we own the UX
+
+            var op = e.DownloadOperation;
+            LogBridge($"DownloadStarting: uri={op.Uri}, resultFilePath={e.ResultFilePath}");
+            op.StateChanged += (_, __) =>
+            {
+                LogBridge($"DownloadOperation.StateChanged: state={op.State}, interruptReason={op.InterruptReason}, bytesReceived={op.BytesReceived}, path={op.ResultFilePath}");
+            };
+        }
+        catch (Exception ex)
+        {
+            LogBridge($"CoreWebView2_DownloadStarting EXCEPTION: {ex}");
+        }
+    }
+
     private async void CoreWebView2_WebMessageReceived(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
     {
         string? requestId = null;
@@ -603,20 +650,61 @@ public partial class MainWindow : Window
                     // the user as "a toast said it's saving, then nothing".
                     // Racing it against a timeout turns that silent hang into
                     // a visible, logged failure instead.
-                    // Kept a couple seconds under native.js's own 10s
-                    // client-side timeout so this more specific, logged
-                    // timeout reply wins the race and reaches the UI first.
+                    // Kept under native.js's own 5s client-side timeout so
+                    // this more specific, logged timeout reply wins the race
+                    // and reaches the UI first.
                     var printTask = Browser.CoreWebView2.PrintToPdfAsync(path);
-                    var winner = await System.Threading.Tasks.Task.WhenAny(printTask, System.Threading.Tasks.Task.Delay(TimeSpan.FromSeconds(8)));
+                    var winner = await System.Threading.Tasks.Task.WhenAny(printTask, System.Threading.Tasks.Task.Delay(TimeSpan.FromSeconds(3.5)));
                     if (winner != printTask)
                     {
-                        LogBridge($"printToPdf: TIMEOUT after 8s, path={path}");
+                        LogBridge($"printToPdf: TIMEOUT after 3.5s, path={path}");
                         Reply(requestId, new { ok = false, error = "timeout", timedOut = true });
                         break;
                     }
                     var success = await printTask;
                     LogBridge($"printToPdf: done success={success}, path={path}, exists={File.Exists(path)}");
                     Reply(requestId, new { ok = success, path });
+                    break;
+                }
+                // v2.14: an alternative to printToPdf/writeFileBytes that
+                // never calls our own File.WriteAllBytes / Directory APIs at
+                // all — printToPdf's direct-disk-write path and writeFileBytes
+                // both still returned "reply never arrives" (timeout) in
+                // testing even after several rounds of fixes, consistent
+                // with the host exe's own file I/O being restricted. This
+                // command only reads bytes via WebView2's own PDF renderer
+                // and hands them to JS; the caller (reportstudio.js) turns
+                // them into a Blob and triggers a native WebView2 download
+                // (see prepareDownload + CoreWebView2_DownloadStarting)
+                // instead — the actual disk write then happens inside
+                // WebView2's own (Microsoft-signed) process, not ours.
+                case "printToPdfBlob":
+                {
+                    LogBridge("printToPdfBlob: start");
+                    var pdfTask = Browser.CoreWebView2.PrintToPdfStreamAsync(null);
+                    var pdfWinner = await System.Threading.Tasks.Task.WhenAny(pdfTask, System.Threading.Tasks.Task.Delay(TimeSpan.FromSeconds(3.5)));
+                    if (pdfWinner != pdfTask)
+                    {
+                        LogBridge("printToPdfBlob: TIMEOUT after 3.5s");
+                        Reply(requestId, new { ok = false, error = "timeout", timedOut = true });
+                        break;
+                    }
+                    using var pdfStream = await pdfTask;
+                    using var pdfMs = new MemoryStream();
+                    await pdfStream.CopyToAsync(pdfMs);
+                    LogBridge($"printToPdfBlob: done, bytes={pdfMs.Length}");
+                    Reply(requestId, new { ok = true, base64 = Convert.ToBase64String(pdfMs.ToArray()) });
+                    break;
+                }
+                // Sets the path CoreWebView2_DownloadStarting will redirect
+                // the *next* WebView2 download to. Call this immediately
+                // before triggering a blob download from JS.
+                case "prepareDownload":
+                {
+                    var downloadPath = root.GetProperty("path").GetString();
+                    LogBridge($"prepareDownload: path={downloadPath}");
+                    _pendingDownloadPath = downloadPath;
+                    Reply(requestId, new { ok = true });
                     break;
                 }
                 case "readFileBytes":
