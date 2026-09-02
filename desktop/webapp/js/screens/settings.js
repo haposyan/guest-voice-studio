@@ -12,6 +12,7 @@ import { db, DATA_RETENTION_DAYS } from "../db.js";
 import { escapeHtml, toast, confirmDialog, openModal, closeModal } from "../components/ui.js";
 import { isDesktop, nativeInfo, revealInExplorerToast, pickFolder, downloadBlob, requestUninstall, requestRelocateData, joinPath, openPath, saveBlobToPath } from "../native.js";
 import { encryptBackup, decryptBackup } from "../backup.js";
+import { THEME_COLORS, applyTheme } from "../theme.js";
 
 // 除外語タブは初期値では非表示（v2.6）：使う場面を想像しにくい、という
 // フィードバックのため。ブランド・保存設定のトグルで表示・非表示を
@@ -377,6 +378,13 @@ function renderBrand(panel, root) {
       <p class="hint">初期値は非表示です。機能自体は非表示中も残っており、オンにすればいつでも設定できます。</p>
     </div>
     <div class="card">
+      <div class="card-title"><h3>カラーテーマ</h3></div>
+      <p class="hint" style="margin-bottom:8px">サイドバー・見出し・主要ボタンの色を選べます（評価の良し悪しを示す色は対象外です）。</p>
+      <div class="theme-swatches">
+        ${THEME_COLORS.map((t) => `<button type="button" class="theme-swatch ${(!brand.themeColor && t.id === "navy") || brand.themeColor === t.id ? "active" : ""}" data-theme-id="${t.id}" style="background:${t.main}" title="${escapeHtml(t.name)}"></button>`).join("")}
+      </div>
+    </div>
+    <div class="card">
       <div class="card-title"><h3>データ保存・取込設定</h3></div>
       <div class="field"><label>データ保存期間</label><div>${DATA_RETENTION_DAYS}日（5年間・うるう年考慮／編集不可）</div></div>
       <p class="hint">CSV原本は取込後に破棄され、保存されません。</p>
@@ -434,10 +442,23 @@ function renderBrand(panel, root) {
     </div>
     <button class="btn primary" id="saveBrand" style="margin-top:4px">保存</button>
   `;
+  // v2.18: テーマ色はクリックした瞬間に画面へ反映（プレビュー）しつつ、
+  // 実際の保存は他のブランド設定と合わせて「保存」ボタンでまとめて行う
+  // （他の項目と挙動を揃えるため）。
+  let pendingThemeId = brand.themeColor || "navy";
+  panel.querySelectorAll("[data-theme-id]").forEach((btn) => {
+    btn.onclick = () => {
+      pendingThemeId = btn.dataset.themeId;
+      applyTheme(pendingThemeId);
+      panel.querySelectorAll("[data-theme-id]").forEach((b) => b.classList.toggle("active", b === btn));
+    };
+  });
+
   panel.querySelector("#saveBrand").onclick = () => {
     const exportDirEl = panel.querySelector("#bExportDir");
     db.brand = {
       ...db.brand,
+      themeColor: pendingThemeId,
       company: panel.querySelector("#bCompany").value.trim() || BRAND_COMPANY_DEFAULT,
       showEffectConfirm: panel.querySelector("#bShowEffect").checked,
       showExcludedWordsTab: panel.querySelector("#bShowWordsTab").checked,

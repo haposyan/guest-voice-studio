@@ -4,7 +4,7 @@
 
 import { db } from "../db.js";
 import { readFileSmart, parseCsv, buildPreview, importRows } from "../csv.js";
-import { toast, escapeHtml } from "../components/ui.js";
+import { toast, escapeHtml, confirmDialog } from "../components/ui.js";
 
 let state = { file: null, text: null, encoding: null, parsed: null, preview: null };
 
@@ -22,6 +22,7 @@ export function mountImport(root) {
       </div>
     </div>
     <div id="previewArea"></div>
+    <div id="historyArea"></div>
   `;
 
   const dropzone = root.querySelector("#dropzone");
@@ -34,6 +35,50 @@ export function mountImport(root) {
     if (f) handleFile(f, root);
   });
   fileInput.onchange = () => { if (fileInput.files[0]) handleFile(fileInput.files[0], root); };
+
+  renderHistory(root);
+}
+
+// v2.18: 取込済み期間の一覧と、期間ごとの取消（クリア）機能。誤った
+// CSVを取り込んでしまった場合に、その回の取込分だけを取り消せるように
+// する（batchIdで紐付いたレコードだけを削除し、他の期間・他の取込には
+// 影響しない）。
+function renderHistory(root) {
+  const area = root.querySelector("#historyArea");
+  const batches = db.importBatches;
+  if (!batches.length) { area.innerHTML = ""; return; }
+  area.innerHTML = `
+    <div class="card">
+      <div class="card-title"><h3>取込履歴</h3></div>
+      <p class="hint">誤って取り込んだ回がある場合、その回の分だけを取り消せます（他の期間のデータには影響しません）。</p>
+      <div class="table-wrap"><table><thead><tr><th>取込日時</th><th>ファイル名</th><th>対象期間</th><th>成功件数</th><th></th></tr></thead><tbody>
+        ${batches.map((b) => `<tr>
+          <td>${escapeHtml(new Date(b.importedAt).toLocaleString("ja-JP"))}</td>
+          <td>${escapeHtml(b.filename)}</td>
+          <td>${escapeHtml(b.periodStart || "-")} ～ ${escapeHtml(b.periodEnd || "-")}</td>
+          <td>${b.success}件</td>
+          <td><button class="btn small danger" data-clear-batch="${b.id}">この回を取り消す</button></td>
+        </tr>`).join("")}
+      </tbody></table></div>
+    </div>
+  `;
+  area.querySelectorAll("[data-clear-batch]").forEach((btn) => {
+    btn.onclick = () => {
+      const batchId = btn.dataset.clearBatch;
+      const batch = batches.find((b) => b.id === batchId);
+      confirmDialog(
+        `${batch.filename}（${batch.periodStart || "-"} ～ ${batch.periodEnd || "-"}）の取込分（${batch.success}件）を取り消します。この操作は取り消せません。よろしいですか？`,
+        () => {
+          db.records = db.records.filter((r) => r.batchId !== batchId);
+          db.importBatches = db.importBatches.filter((b) => b.id !== batchId);
+          db.audit("csv_import_undo", batchId, `${batch.filename} の取込を取り消し`);
+          toast("取込を取り消しました", "good");
+          renderHistory(root);
+        },
+        { danger: true, okLabel: "取り消す" }
+      );
+    };
+  });
 }
 
 async function handleFile(file, root) {
@@ -58,6 +103,14 @@ function renderPreview(root) {
       <td>${c.commentCol} ${c.commentFound ? "✅" : "<span style=\"color:var(--bad)\">未検出</span>"}</td>
     </tr>`).join("");
 
+  // v2.18: 取込済み期間との重複検出。厳密な業務上の重複排除（回答ID単位）
+  // はimportRows側で別途行われる — これはあくまで「同じ期間のCSVをもう
+  // 一度取り込もうとしていないか」を、取り込む前にユーザーに気づかせる
+  // ためのもの。
+  const overlaps = preview.periodStart && preview.periodEnd
+    ? db.importBatches.filter((b) => b.periodStart && b.periodEnd && b.periodStart <= preview.periodEnd && preview.periodStart <= b.periodEnd)
+    : [];
+
   area.innerHTML = `
     <div class="card">
       <div class="card-title"><h3>プレビュー：${escapeHtml(file.name)}</h3><span class="badge role">${encoding}</span></div>
@@ -67,6 +120,7 @@ function renderPreview(root) {
         <div class="stat-tile"><div class="label">拠点数（ファイル内）</div><div class="value">${preview.storeNamesInFile.length}</div></div>
         <div class="stat-tile"><div class="label">回答ID未設定</div><div class="value">${preview.missingIdCount}<span class="unit">件</span></div></div>
       </div>
+      ${overlaps.length ? `<p class="hint" style="color:var(--warn);font-weight:600">⚠ 取込済みの期間と重なっています: ${overlaps.map((b) => `${escapeHtml(b.filename)}（${escapeHtml(b.periodStart)}～${escapeHtml(b.periodEnd)}）`).join("、")}。回答IDが一致する行は自動的に重複除外されますが、取り込む前にご確認ください。</p>` : ""}
       ${preview.personalDataColumns.length ? `<p class="hint" style="color:var(--info);font-weight:600">⚠ 名前とメールアドレスの情報を除外して取り込みます（検出した列: ${preview.personalDataColumns.map(escapeHtml).join(", ")}）。これらの列の値は一切保存されません。</p>` : ""}
       ${!preview.hasIdColumn ? `<p class="hint" style="color:var(--warn);margin-top:10px">⚠ 回答ID列が見つかりません。重複排除ができないため、全件「要確認」として取り込まれます（IMP-04）。</p>` : ""}
       ${preview.unmatchedStores.length ? `<p class="hint" style="color:var(--bad)">⚠ 拠点名が一致しません: ${preview.unmatchedStores.map(escapeHtml).join(", ")}（Settingsで表記揺れを登録してください／MAP-04）</p>` : ""}
@@ -82,7 +136,17 @@ function renderPreview(root) {
     </div>
   `;
   area.querySelector("#cancelImport").onclick = () => { area.innerHTML = ""; };
-  area.querySelector("#confirmImport").onclick = () => commitImport(root);
+  area.querySelector("#confirmImport").onclick = () => {
+    if (overlaps.length) {
+      confirmDialog(
+        `取込済みの期間（${overlaps.map((b) => `${b.filename}：${b.periodStart}～${b.periodEnd}`).join("、")}）と重なっています。重複する回答は自動的に除外されますが、このまま取り込みますか？`,
+        () => commitImport(root),
+        { danger: true, okLabel: "取り込む" }
+      );
+    } else {
+      commitImport(root);
+    }
+  };
 }
 
 function commitImport(root) {
@@ -132,4 +196,5 @@ function commitImport(root) {
     </div>
   `;
   toast(`取込完了：成功${result.success}件`, "good");
+  renderHistory(root);
 }

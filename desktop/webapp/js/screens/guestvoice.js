@@ -13,22 +13,51 @@ import { renderWordCloud, renderWordRanking, renderSentimentLegend } from "../co
 import { ratingDistributionChart } from "../components/charts.js";
 import { openModal, closeModal, escapeHtml, toast } from "../components/ui.js";
 import { downloadBlob } from "../native.js";
+import { takePendingJump } from "./guestvoice-bridge.js";
 
 let filters;
 let editMode = false;
 
+// v2.18: navigating to another screen and back used to silently reset the
+// filters (period, items, rating band, comment filter) back to defaults —
+// same complaint as Report Studio's preview getting wiped, and the same
+// fix: only initialize on the first mount of this app session (filters is
+// already a module-level variable, so it otherwise persists on its own).
+// Unlike Report Studio there's no separately-generated preview to cache —
+// render() always recomputes straight from `filters` and the live data, so
+// just keeping `filters` itself around is enough to restore the same view.
+//
+// Lobbyの項目別表からのクリック連携（guestvoice-bridge.js経由）で来た場合は
+// そちらの指定を優先する。
+let everMounted = false;
 export function mountGuestVoice(root) {
-  const myStores = allowedStoreIds();
-  filters = {
-    storeIds: [...myStores],
-    itemIds: [],
-    periodKey: "thisMonth",
-    start: periodPreset("thisMonth").start,
-    end: periodPreset("thisMonth").end,
-    band: "all",
-    commentFilter: "all",
-  };
-  editMode = false;
+  const jump = takePendingJump();
+  if (jump) {
+    const myStores = allowedStoreIds();
+    filters = {
+      storeIds: [...myStores],
+      itemIds: jump.itemId ? [jump.itemId] : [],
+      periodKey: "custom",
+      start: jump.start, end: jump.end,
+      band: "all",
+      commentFilter: "all",
+    };
+    editMode = false;
+    everMounted = true;
+  } else if (!everMounted) {
+    everMounted = true;
+    const myStores = allowedStoreIds();
+    filters = {
+      storeIds: [...myStores],
+      itemIds: [],
+      periodKey: "thisMonth",
+      start: periodPreset("thisMonth").start,
+      end: periodPreset("thisMonth").end,
+      band: "all",
+      commentFilter: "all",
+    };
+    editMode = false;
+  }
   render(root);
 }
 
@@ -68,9 +97,15 @@ function render(root) {
         </div>
         <div>
           <label>項目</label>
-          <div class="tag-list">
-            <span class="chip ${!filters.itemIds.length ? "active" : ""}" data-item-all>すべて選択</span>
-            ${items.map((i) => `<span class="chip ${filters.itemIds.includes(i.id) ? "active" : ""}" data-item="${i.id}">${escapeHtml(i.name)}</span>`).join("")}
+          <div class="dropdown-check" id="itemDropdown">
+            <button type="button" class="btn small" id="itemDropdownBtn">
+              ${!filters.itemIds.length ? "すべて" : `${filters.itemIds.length}件選択中`} <span class="caret">▾</span>
+            </button>
+            <div class="dropdown-check-panel" id="itemDropdownPanel" hidden>
+              <label class="checkbox-row"><input type="checkbox" id="itemCheckAll" ${!filters.itemIds.length ? "checked" : ""}><strong>すべて選択</strong></label>
+              <hr class="divider" style="margin:6px 0">
+              ${items.map((i) => `<label class="checkbox-row"><input type="checkbox" data-item-check="${i.id}" ${filters.itemIds.includes(i.id) ? "checked" : ""}>${escapeHtml(i.name)}</label>`).join("")}
+            </div>
           </div>
         </div>
         <div class="field-row">
@@ -167,17 +202,43 @@ function cycleSentiment(word, words, root) {
   render(root);
 }
 
+// v2.18: 項目選択をチップの羅列からプルダウン＋チェックボックスに変更
+// （項目数が多いと折り返して場所を取っていたため）。パネルの開閉状態は
+// モジュール変数で持っておき、チェック操作のたびにrender()が画面全体を
+// 再構築してもパネルが閉じてしまわないようにする。
+let itemPanelOpen = false;
+
 function wireFilters(root) {
-  root.querySelectorAll("[data-item]").forEach((el) => {
-    el.onclick = () => {
-      const id = el.dataset.item;
-      const idx = filters.itemIds.indexOf(id);
-      if (idx >= 0) filters.itemIds.splice(idx, 1); else filters.itemIds.push(id);
-      render(root);
+  const dropdown = root.querySelector("#itemDropdown");
+  const panel = root.querySelector("#itemDropdownPanel");
+  if (dropdown && panel) {
+    panel.hidden = !itemPanelOpen;
+    // パネルの外側をクリックしたら閉じる。{once:true}なので1回発火すると
+    // 自動的に外れる — 呼ぶたびに新しく1つ張る（重複ガード不要）。
+    const armOutsideClose = () => {
+      document.addEventListener("click", () => { itemPanelOpen = false; panel.hidden = true; }, { once: true });
     };
-  });
-  const allItemBtn = root.querySelector("[data-item-all]");
-  if (allItemBtn) allItemBtn.onclick = () => { filters.itemIds = []; render(root); };
+    root.querySelector("#itemDropdownBtn").onclick = (e) => {
+      e.stopPropagation();
+      itemPanelOpen = !itemPanelOpen;
+      panel.hidden = !itemPanelOpen;
+      if (itemPanelOpen) armOutsideClose();
+    };
+    panel.onclick = (e) => e.stopPropagation();
+    root.querySelector("#itemCheckAll").onchange = () => { filters.itemIds = []; render(root); };
+    root.querySelectorAll("[data-item-check]").forEach((el) => {
+      el.onchange = () => {
+        const id = el.dataset.itemCheck;
+        const idx = filters.itemIds.indexOf(id);
+        if (el.checked) { if (idx < 0) filters.itemIds.push(id); }
+        else if (idx >= 0) filters.itemIds.splice(idx, 1);
+        render(root);
+      };
+    });
+    // 描画時点で既に開いていた場合（チェック操作でrender()し直した場合な
+    // ど）も、閉じるリスナーを付け直す。
+    if (itemPanelOpen) armOutsideClose();
+  }
 
   root.querySelectorAll("[data-band]").forEach((el) => {
     el.onclick = () => { filters.band = el.dataset.band; render(root); };

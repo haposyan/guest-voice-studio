@@ -36,6 +36,10 @@ const KEYS = {
   ratingBands: "ratingBands",
   brand: "brand",
   sentimentOverrides: "sentimentOverrides",
+  // v2.18: Lobbyの客室稼働率入力フォーム用。"YYYY-MM" -> {occupancyRate,
+  // guestCount} のマップ。PMS連携がないため手入力。guestCountがあれば
+  // 回答率（回答数/宿泊者数）を表示できる。
+  occupancy: "occupancy",
 };
 
 function load(key, fallback) {
@@ -159,7 +163,7 @@ export const db = {
     if (!localStorage.getItem(NS + KEYS.savedViews)) save(KEYS.savedViews, []);
     if (!localStorage.getItem(NS + KEYS.ratingBands)) save(KEYS.ratingBands, seedRatingBands());
     if (!localStorage.getItem(NS + KEYS.brand)) {
-      save(KEYS.brand, { company: "一般財団法人休暇村協会", logo: "", showEffectConfirm: false, reportAuthors: [], showExcludedWordsTab: false, exportDir: "" });
+      save(KEYS.brand, { company: "一般財団法人休暇村協会", logo: "", showEffectConfirm: false, reportAuthors: [], showExcludedWordsTab: false, exportDir: "", themeColor: null });
     } else {
       // v2.2: keepRawCsv・retentionDays（可変）は廃止（データ保存期間は
       // DATA_RETENTION_DAYS に固定）。showEffectConfirm・reportAuthors・
@@ -176,6 +180,7 @@ export const db = {
       if (!("reportAuthors" in b)) { b.reportAuthors = []; changed = true; }
       if (!("showExcludedWordsTab" in b)) { b.showExcludedWordsTab = false; changed = true; }
       if (!("exportDir" in b)) { b.exportDir = ""; changed = true; }
+      if (!("themeColor" in b)) { b.themeColor = null; changed = true; }
       if (changed) save(KEYS.brand, b);
     }
     if (!localStorage.getItem(NS + KEYS.sentimentOverrides)) save(KEYS.sentimentOverrides, {});
@@ -219,6 +224,8 @@ export const db = {
   set brand(v) { save(KEYS.brand, v); },
   get sentimentOverrides() { return load(KEYS.sentimentOverrides, {}); },
   set sentimentOverrides(v) { save(KEYS.sentimentOverrides, v); },
+  get occupancy() { return load(KEYS.occupancy, {}); },
+  set occupancy(v) { save(KEYS.occupancy, v); },
 
   // No login screen: there is one implicit local user. Audit entries are
   // attributed to the signed-in Windows account (window.__NATIVE__) when

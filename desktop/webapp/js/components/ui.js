@@ -61,3 +61,40 @@ export function fmtNum(n, digits = 1) {
   if (n == null || isNaN(n)) return "-";
   return Number(n).toFixed(digits).replace(/\.0$/, digits === 1 ? ".0" : "");
 }
+
+// v2.18: 期限入力用の日付ウィジェット。西暦4桁→月2桁→日2桁の順に、頭から
+// 続けて数字を打つだけで次の欄へ自動的に進む（標準の<input type=date>は
+// クリックしてカレンダーから選ぶ操作が前提で、キーボードだけでの直接入力が
+// 分かりにくいという声への対応）。値はhidden inputにISO形式（YYYY-MM-DD）で
+// 持つので、呼び出し側は今まで通り document.getElementById(id).value を
+// 読むだけでよい — wireDateWidget()を呼び忘れなければ挙動を差し替えるだけで
+// 既存の保存ロジックに変更は不要。
+export function dateWidgetHtml(id, value) {
+  const [y, m, d] = (value || "").split("-");
+  return `<div class="date-widget" data-date-widget="${id}">
+    <input type="text" inputmode="numeric" maxlength="4" placeholder="西暦" class="date-y" value="${y || ""}">
+    <span class="sep">/</span>
+    <input type="text" inputmode="numeric" maxlength="2" placeholder="月" class="date-m" value="${m || ""}">
+    <span class="sep">/</span>
+    <input type="text" inputmode="numeric" maxlength="2" placeholder="日" class="date-d" value="${d || ""}">
+    <input type="hidden" id="${id}" value="${value || ""}">
+  </div>`;
+}
+
+export function wireDateWidget(root, id) {
+  const wrap = root.querySelector(`[data-date-widget="${id}"]`);
+  if (!wrap) return;
+  const y = wrap.querySelector(".date-y"), m = wrap.querySelector(".date-m"), d = wrap.querySelector(".date-d");
+  const hidden = wrap.querySelector(`#${id}`);
+  function sync() {
+    const yy = y.value.trim();
+    const mm = m.value.trim();
+    const dd = d.value.trim();
+    hidden.value = (yy.length === 4 && mm && dd) ? `${yy}-${mm.padStart(2, "0")}-${dd.padStart(2, "0")}` : "";
+    hidden.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+  y.oninput = () => { y.value = y.value.replace(/\D/g, "").slice(0, 4); if (y.value.length === 4) m.focus(); sync(); };
+  m.oninput = () => { m.value = m.value.replace(/\D/g, "").slice(0, 2); if (m.value.length === 2) d.focus(); sync(); };
+  d.oninput = () => { d.value = d.value.replace(/\D/g, "").slice(0, 2); sync(); };
+  [y, m, d].forEach((el) => { el.onblur = sync; });
+}

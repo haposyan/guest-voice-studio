@@ -6,9 +6,27 @@
 
 import { db } from "../db.js";
 import { allowedStoreIds } from "../app.js";
-import { filterRecords, computeMetrics, itemBreakdown, periodPreset, delta } from "../analysis.js";
+import { filterRecords, computeMetrics, itemBreakdown, periodPreset, delta, toISODate } from "../analysis.js";
 import { computeWordFrequencies } from "../tokenizer.js";
-import { escapeHtml } from "../components/ui.js";
+import { escapeHtml, toast } from "../components/ui.js";
+import { setPendingJump } from "./guestvoice-bridge.js";
+
+// v2.18: 月切替。0=今月、-1=先月、… 現在月より先には進めない（未来のデータは
+// 存在しないため）。ナビゲーションをまたいでも当月に戻らないよう、Report
+// Studio／Guest Voiceと同じくモジュール変数のまま保持する（アプリ再起動で
+// リセットされれば十分）。
+let monthOffset = 0;
+
+// 指定オフセット分ずらした月の範囲。オフセット0（今月）は「今日まで」、
+// それ以外の過去月は月初〜月末のフル範囲。periodPreset("thisMonth")と同じ
+// 「今日まで」ルールを、任意の月にも適用できるようにしたもの。
+function monthRange(offset) {
+  const now = new Date();
+  const y = now.getFullYear(), m = now.getMonth() + offset;
+  const start = new Date(y, m, 1);
+  const end = offset === 0 ? now : new Date(y, m + 1, 0);
+  return { start: toISODate(start), end: toISODate(end), label: `${start.getFullYear()}年${start.getMonth() + 1}月` };
+}
 
 export function mountLobby(root) {
   const user = db.currentUser();
@@ -16,8 +34,8 @@ export function mountLobby(root) {
   const bands = db.ratingBands;
   const items = db.itemMappings.filter((i) => i.enabled);
 
-  const thisMonth = periodPreset("thisMonth");
-  const lastMonth = periodPreset("lastMonth");
+  const thisMonth = monthRange(monthOffset);
+  const lastMonth = monthRange(monthOffset - 1);
 
   const curRecords = filterRecords(db.records, { storeIds: myStores, start: thisMonth.start, end: thisMonth.end }, bands);
   const prevRecords = filterRecords(db.records, { storeIds: myStores, start: lastMonth.start, end: lastMonth.end }, bands);
@@ -53,18 +71,34 @@ export function mountLobby(root) {
     .map((w) => ({ word: w.word, diff: (curMap.get(w.word)?.ratePer100 || 0) - w.ratePer100 }))
     .filter((w) => w.diff < 0).sort((a, b) => a.diff - b.diff).slice(0, 6);
 
-  const completedThisMonth = myTasks.filter((t) => t.status === "効果確認済み" && t.completedAt && t.completedAt >= thisMonth.start);
-  const doneThisMonth = myTasks.filter((t) => t.status === "対応済み" && t.completedAt && t.completedAt >= thisMonth.start);
+  const completedThisMonth = myTasks.filter((t) => t.status === "効果確認済み" && t.completedAt && t.completedAt >= thisMonth.start && t.completedAt <= thisMonth.end);
+  const doneThisMonth = myTasks.filter((t) => t.status === "対応済み" && t.completedAt && t.completedAt >= thisMonth.start && t.completedAt <= thisMonth.end);
+
+  // v2.18: 客室稼働率・回答率。PMS連携がないため月ごとに手入力する
+  // （db.occupancy、"YYYY-MM"キー）。宿泊者数が入力されていれば
+  // 回答率＝回答数÷宿泊者数で表示する。
+  const monthKey = thisMonth.start.slice(0, 7);
+  const occ = db.occupancy[monthKey] || {};
+  const responseRate = occ.guestCount ? Math.round((curMetrics.responseCount / occ.guestCount) * 1000) / 10 : null;
 
   root.innerHTML = `
+    <div class="card no-print" style="padding:10px 16px">
+      <div class="row" style="align-items:center;justify-content:center;gap:14px">
+        <button class="btn small" id="prevMonthBtn">‹ 前月</button>
+        <strong style="min-width:7em;text-align:center">${escapeHtml(thisMonth.label)}${monthOffset === 0 ? "（今月）" : ""}</strong>
+        <button class="btn small" id="nextMonthBtn" ${monthOffset >= 0 ? "disabled" : ""}>翌月 ›</button>
+        ${monthOffset !== 0 ? `<button class="btn small" id="thisMonthBtn" style="margin-left:8px">今月に戻る</button>` : ""}
+      </div>
+    </div>
+
     ${(completedThisMonth.length + doneThisMonth.length) > 0 ? `
       <div class="celebrate">
         <div class="emoji">🎉</div>
-        <div>今月は <strong>${completedThisMonth.length + doneThisMonth.length}件</strong> の改善が実を結びました。効果確認済み ${completedThisMonth.length}件、対応完了 ${doneThisMonth.length}件です。日々の対応に感謝します。</div>
+        <div>${escapeHtml(thisMonth.label)}は <strong>${completedThisMonth.length + doneThisMonth.length}件</strong> の改善が実を結びました。効果確認済み ${completedThisMonth.length}件、対応完了 ${doneThisMonth.length}件です。日々の対応に感謝します。</div>
       </div>` : `
       <div class="celebrate">
         <div class="emoji">🌱</div>
-        <div>今月完了した改善課題はまだありません。Action Boardで対応状況を確認しましょう。</div>
+        <div>${escapeHtml(thisMonth.label)}に完了した改善課題はまだありません。Action Boardで対応状況を確認しましょう。</div>
       </div>`}
 
     <div class="grid cols-4">
@@ -74,12 +108,23 @@ export function mountLobby(root) {
       ${statTile("コメント記入率", curMetrics.fillRate, "%", delta(curMetrics.fillRate, prevMetrics.fillRate), false, false, "評価かコメントが入った項目のうち、コメントも入力された割合")}
     </div>
 
+    <div class="card no-print">
+      <div class="card-title"><h3>客室稼働率・回答率（${escapeHtml(thisMonth.label)}）</h3></div>
+      <p class="hint">PMSとの連携がないため、稼働率・宿泊者数は手入力です。宿泊者数を入力すると、回答率（回答数÷宿泊者数）が自動で計算されます。</p>
+      <div class="field-row">
+        <div class="field"><label>客室稼働率（%）</label><input type="number" id="occRate" min="0" max="100" step="0.1" value="${occ.occupancyRate ?? ""}" placeholder="例：78.5"></div>
+        <div class="field"><label>延べ宿泊者数</label><input type="number" id="occGuests" min="0" step="1" value="${occ.guestCount ?? ""}" placeholder="例：420"></div>
+        <div class="field"><label>回答率</label><div style="padding-top:8px;font-weight:700;font-size:1.1rem">${responseRate != null ? `${responseRate}%` : "-"}</div></div>
+        <div class="field" style="justify-content:flex-end;display:flex"><button class="btn small primary" id="occSave">保存</button></div>
+      </div>
+    </div>
+
     <div class="grid cols-2">
       <div class="card">
-        <div class="card-title"><h3>項目別の評価・低評価率（今月）</h3></div>
-        <p class="muted" style="font-size:.76rem;margin:-4px 0 8px">※低評価率は「全体のうち2以下の評価率」です（低評価率の定義はLobby上部と共通）。</p>
+        <div class="card-title"><h3>項目別の評価・低評価率（${escapeHtml(thisMonth.label)}）</h3></div>
+        <p class="muted" style="font-size:.76rem;margin:-4px 0 8px">※低評価率は「全体のうち2以下の評価率」です（低評価率の定義はLobby上部と共通）。行をクリックすると、その項目・期間でGuest Voice画面に移動します。</p>
         <div class="table-wrap"><table><thead><tr><th>項目</th><th>平均</th><th>低評価率</th></tr></thead><tbody>
-          ${breakdown.map((b) => `<tr><td>${escapeHtml(b.item.name)}</td><td>${b.metrics.avg ?? "-"}</td><td style="color:${(b.metrics.lowRate||0) > 20 ? "var(--bad)" : "inherit"}">${b.metrics.lowRate ?? "-"}%</td></tr>`).join("")}
+          ${breakdown.map((b) => `<tr class="clickable-row" data-item-id="${escapeHtml(b.item.id)}"><td>${escapeHtml(b.item.name)}</td><td>${b.metrics.avg ?? "-"}</td><td style="color:${(b.metrics.lowRate||0) > 20 ? "var(--bad)" : "inherit"}">${b.metrics.lowRate ?? "-"}%</td></tr>`).join("")}
         </tbody></table></div>
       </div>
       <div class="card">
@@ -94,16 +139,42 @@ export function mountLobby(root) {
     <div class="grid cols-2">
       <div class="card">
         <div class="card-title"><h3>増加している単語</h3></div>
-        <p class="muted" style="font-size:.76rem;margin:-4px 0 8px">低評価コメントに含まれる単語のうち、先月より出現率が上がっているものです。</p>
-        ${rising.length ? `<div class="tag-list">${rising.map((r) => `<span class="chip" style="border-color:var(--bad)">${escapeHtml(r.word)} <span class="muted">+${r.diff.toFixed(1)}</span></span>`).join("")}</div>` : `<div class="empty-state">先月比で増加している単語はありません</div>`}
+        <p class="muted" style="font-size:.76rem;margin:-4px 0 8px">コメントに含まれる単語のうち、先月より出現率が上がっているものです。</p>
+        ${rising.length ? `<div class="tag-list">${rising.map((r) => `<span class="chip static" style="border-color:var(--bad)">${escapeHtml(r.word)} <span class="muted">+${r.diff.toFixed(1)}</span></span>`).join("")}</div>` : `<div class="empty-state">先月比で増加している単語はありません</div>`}
       </div>
       <div class="card">
         <div class="card-title"><h3>減っている単語</h3></div>
-        <p class="muted" style="font-size:.76rem;margin:-4px 0 8px">低評価コメントに含まれる単語のうち、先月より出現率が下がっているものです。</p>
-        ${improving.length ? `<div class="tag-list">${improving.map((r) => `<span class="chip" style="border-color:var(--good)">${escapeHtml(r.word)} <span class="muted">${r.diff.toFixed(1)}</span></span>`).join("")}</div>` : `<div class="empty-state">先月比で減っている単語はまだありません</div>`}
+        <p class="muted" style="font-size:.76rem;margin:-4px 0 8px">コメントに含まれる単語のうち、先月より出現率が下がっているものです。</p>
+        ${improving.length ? `<div class="tag-list">${improving.map((r) => `<span class="chip static" style="border-color:var(--good)">${escapeHtml(r.word)} <span class="muted">${r.diff.toFixed(1)}</span></span>`).join("")}</div>` : `<div class="empty-state">先月比で減っている単語はまだありません</div>`}
       </div>
     </div>
   `;
+
+  root.querySelector("#prevMonthBtn").onclick = () => { monthOffset -= 1; mountLobby(root); };
+  const nextBtn = root.querySelector("#nextMonthBtn");
+  if (nextBtn && !nextBtn.disabled) nextBtn.onclick = () => { monthOffset += 1; mountLobby(root); };
+  const thisBtn = root.querySelector("#thisMonthBtn");
+  if (thisBtn) thisBtn.onclick = () => { monthOffset = 0; mountLobby(root); };
+
+  root.querySelector("#occSave").onclick = () => {
+    const rate = root.querySelector("#occRate").value;
+    const guests = root.querySelector("#occGuests").value;
+    const all = db.occupancy;
+    all[monthKey] = {
+      occupancyRate: rate === "" ? null : Number(rate),
+      guestCount: guests === "" ? null : Number(guests),
+    };
+    db.occupancy = all;
+    toast("保存しました", "good");
+    mountLobby(root);
+  };
+
+  root.querySelectorAll(".clickable-row[data-item-id]").forEach((tr) => {
+    tr.onclick = () => {
+      setPendingJump(tr.dataset.itemId, thisMonth.start, thisMonth.end);
+      location.hash = "#guestvoice";
+    };
+  });
 }
 
 function statTile(label, value, unit, deltaVal, isDecimal, invertGoodBad, note) {

@@ -12,6 +12,7 @@
 
 import { db } from "./db.js";
 import { isDesktop, getZoom, setZoom, stepZoom } from "./native.js";
+import { applyTheme } from "./theme.js";
 import { mountSetup } from "./screens/setup.js";
 import { mountLobby } from "./screens/lobby.js";
 import { mountGuestVoice } from "./screens/guestvoice.js";
@@ -142,6 +143,7 @@ function renderScreen() {
 }
 
 export function render() {
+  applyTheme(db.brand.themeColor);
   const app = document.getElementById("app");
   if (!db.isConfigured) {
     app.innerHTML = "";

@@ -22,7 +22,7 @@
 
 import { db } from "../db.js";
 import { allowedStoreIds } from "../app.js";
-import { filterRecords, computeMetrics, itemBreakdown, periodPreset, delta } from "../analysis.js";
+import { filterRecords, computeMetrics, itemBreakdown, periodPreset, delta, toISODate } from "../analysis.js";
 import { computeWordFrequencies } from "../tokenizer.js";
 import { renderWordCloud } from "../components/wordcloud.js";
 import * as analysis from "../analysis.js";
@@ -82,6 +82,27 @@ function render(root) {
       <div class="card-title"><h2>報告書の条件</h2></div>
       <p class="muted" style="margin-top:-6px">対象拠点: <strong>${escapeHtml(db.storeName(db.LOCAL_STORE_ID))}</strong></p>
       <div class="field-row">
+        <div class="field">
+          <label>報告期間（月単位で選択）</label>
+          <div class="row" style="gap:6px">
+            <input type="month" id="pMonth" value="${cfg.periodStart ? cfg.periodStart.slice(0, 7) : ""}" style="flex:1">
+            <button class="btn small" data-quick="p:thisMonth">今月</button>
+            <button class="btn small" data-quick="p:lastMonth">前月</button>
+            <button class="btn small" data-quick="p:lastYearSameMonth">前年同月</button>
+          </div>
+        </div>
+        <div class="field">
+          <label>比較期間（月単位で選択）</label>
+          <div class="row" style="gap:6px">
+            <input type="month" id="cMonth" value="${cfg.compareStart ? cfg.compareStart.slice(0, 7) : ""}" style="flex:1">
+            <button class="btn small" data-quick="c:thisMonth">今月</button>
+            <button class="btn small" data-quick="c:lastMonth">前月</button>
+            <button class="btn small" data-quick="c:lastYearSameMonth">前年同月</button>
+          </div>
+        </div>
+      </div>
+      <p class="hint" style="margin:-6px 0 10px">月単位で選択すると、その月の1日〜末日（今月の場合は今日まで）が下の日付欄に反映されます。日単位で細かく調整したい場合は下の欄を直接編集してください。</p>
+      <div class="field-row">
         <div class="field"><label>報告期間 開始</label><input type="date" id="pStart" value="${cfg.periodStart}"></div>
         <div class="field"><label>報告期間 終了</label><input type="date" id="pEnd" value="${cfg.periodEnd}"></div>
         <div class="field"><label>比較期間 開始</label><input type="date" id="cStart" value="${cfg.compareStart}"></div>
@@ -108,6 +129,34 @@ function render(root) {
   root.querySelector("#cStart").onchange = (e) => { cfg.compareStart = e.target.value; };
   root.querySelector("#cEnd").onchange = (e) => { cfg.compareEnd = e.target.value; };
   root.querySelector("#genBtn").onclick = () => generatePreview(root);
+
+  // v2.18: 月単位選択。<input type=month>で選んだ月の1日〜末日（今月なら
+  // 今日まで）を、下の日単位の開始・終了欄に反映する。前月/前年同月ボタンは
+  // periodPreset()をそのまま再利用（Guest Voiceの期間プリセットと同じ計算）。
+  root.querySelector("#pMonth").onchange = (e) => applyMonthPick(root, "p", e.target.value);
+  root.querySelector("#cMonth").onchange = (e) => applyMonthPick(root, "c", e.target.value);
+  root.querySelectorAll("[data-quick]").forEach((btn) => {
+    btn.onclick = () => {
+      const [target, preset] = btn.dataset.quick.split(":");
+      const range = periodPreset(preset);
+      if (target === "p") { cfg.periodStart = range.start; cfg.periodEnd = range.end; }
+      else { cfg.compareStart = range.start; cfg.compareEnd = range.end; }
+      render(root);
+    };
+  });
+}
+
+function applyMonthPick(root, target, yyyymm) {
+  if (!yyyymm) return;
+  const [y, m] = yyyymm.split("-").map(Number);
+  const start = new Date(y, m - 1, 1);
+  const now = new Date();
+  const isCurrentMonth = y === now.getFullYear() && m === now.getMonth() + 1;
+  const end = isCurrentMonth ? now : new Date(y, m, 0);
+  const startIso = toISODate(start), endIso = toISODate(end);
+  if (target === "p") { cfg.periodStart = startIso; cfg.periodEnd = endIso; }
+  else { cfg.compareStart = startIso; cfg.compareEnd = endIso; }
+  render(root);
 }
 
 function autoSummaryText(m, prevM, storeNames, period) {

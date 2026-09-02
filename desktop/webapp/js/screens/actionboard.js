@@ -6,7 +6,8 @@
 import { db } from "../db.js";
 import { allowedStoreIds, can } from "../app.js";
 import { filterRecords, computeMetrics, delta } from "../analysis.js";
-import { openModal, closeModal, escapeHtml, toast, confirmDialog } from "../components/ui.js";
+import { openModal, closeModal, escapeHtml, toast, confirmDialog, dateWidgetHtml, wireDateWidget } from "../components/ui.js";
+import { isDesktop, nativeInfo, joinPath, saveBlobToPath, downloadBlob, revealInExplorerToast } from "../native.js";
 
 const ALL_STATUSES = ["未対応", "対応中", "対応済み", "効果確認済み"];
 // 効果確認済みステータス・効果確認タブは初期値では非表示（Settings＞ブランド・保存設定で表示可）。
@@ -18,24 +19,51 @@ export function mountActionBoard(root) {
   render(root);
 }
 
+// v2.18: ドラッグ&ドロップで動かした直近1件だけ、元に戻せるようにする
+// （多段Undoは複雑になりすぎるため、意図しない移動をすぐ気づいて戻せれば
+// 十分という判断）。ナビゲーションをまたぐと消える＝画面を離れたら「その
+// 状態が確定した」とみなす。
+let lastDragChange = null;
+
+function applyStatusChange(task, newStatus, changeLabel) {
+  const prevStatus = task.status;
+  if (newStatus === prevStatus) return false;
+  if ((newStatus === "対応済み" || newStatus === "効果確認済み") && !task.completedAt) {
+    task.completedAt = new Date().toISOString().slice(0, 10);
+  }
+  task.status = newStatus;
+  task.history.push({ date: new Date().toISOString(), user: db.currentUser().name, change: changeLabel || `状態: ${prevStatus} → ${newStatus}` });
+  db.tasks = db.tasks.map((t) => t.id === task.id ? task : t);
+  db.audit("task_update", task.id, `状態: ${prevStatus} → ${newStatus}`);
+  return true;
+}
+
 function render(root) {
   const myStores = allowedStoreIds();
   const STATUSES = visibleStatuses();
   const tasks = db.tasks.filter((t) => myStores.includes(t.storeId) && STATUSES.includes(t.status));
   const today = new Date().toISOString().slice(0, 10);
+  const editable = can("editTasks");
 
   root.innerHTML = `
-    <div class="row" style="justify-content:flex-end;margin-bottom:14px">
-      ${can("editTasks") ? `<button class="btn primary" id="newTaskBtn">＋ 新規課題を登録</button>` : ""}
+    <div class="row" style="justify-content:space-between;margin-bottom:14px;align-items:center">
+      <div class="row" style="gap:8px">
+        ${lastDragChange ? `<button class="btn small" id="undoDragBtn">↶ 元に戻す（${escapeHtml(lastDragChange.taskTitle)}を${escapeHtml(lastDragChange.prevStatus)}に）</button>` : ""}
+      </div>
+      <div class="row" style="gap:8px">
+        <button class="btn small" id="exportWordBtn">📄 Word出力</button>
+        <button class="btn small" id="exportExcelBtn">📊 Excel出力</button>
+        ${editable ? `<button class="btn primary" id="newTaskBtn">＋ 新規課題を登録</button>` : ""}
+      </div>
     </div>
     <div class="kanban">
       ${STATUSES.map((status) => {
         const list = tasks.filter((t) => t.status === status);
-        return `<div class="kanban-col">
+        return `<div class="kanban-col" data-status-col="${status}">
           <h4>${status} <span class="badge status-${status}">${list.length}</span></h4>
           ${list.map((t) => {
             const overdue = t.dueDate && t.dueDate < today && status !== "対応済み" && status !== "効果確認済み";
-            return `<div class="kanban-card ${overdue ? "overdue" : ""}" data-task="${t.id}">
+            return `<div class="kanban-card ${overdue ? "overdue" : ""}" data-task="${t.id}" draggable="${editable}">
               <div class="title">${escapeHtml(t.title)}${t.severityFlag ? ' <span title="重大">🚩</span>' : ""}</div>
               <div class="meta">${escapeHtml(db.itemById(t.itemId)?.name || "")} ・ ${escapeHtml(t.assignee || "未割当")}</div>
               <div class="meta">期限: ${t.dueDate || "-"} ${overdue ? '<span style="color:var(--bad)">超過</span>' : ""}</div>
@@ -51,6 +79,126 @@ function render(root) {
   });
   const newBtn = root.querySelector("#newTaskBtn");
   if (newBtn) newBtn.onclick = () => openTaskForm(root);
+  root.querySelector("#exportWordBtn").onclick = () => exportActionBoard("word", tasks, STATUSES);
+  root.querySelector("#exportExcelBtn").onclick = () => exportActionBoard("excel", tasks, STATUSES);
+
+  const undoBtn = root.querySelector("#undoDragBtn");
+  if (undoBtn) undoBtn.onclick = () => {
+    const change = lastDragChange;
+    lastDragChange = null;
+    const task = db.tasks.find((t) => t.id === change.taskId);
+    if (task) applyStatusChange(task, change.prevStatus, `ドラッグ&ドロップの取り消し: ${change.newStatus} → ${change.prevStatus}`);
+    toast("元に戻しました", "good");
+    render(root);
+  };
+
+  if (editable) wireDragAndDrop(root, tasks);
+}
+
+// v2.18: カンバンカードをドラッグして別の列にドロップすると状態が変わる。
+// クリックでの詳細編集（既存の状態プルダウン）はそのまま残しており、
+// ドラッグはあくまで手早く動かすための追加手段という位置づけ。
+function wireDragAndDrop(root, tasks) {
+  let draggingId = null;
+  root.querySelectorAll(".kanban-card[draggable='true']").forEach((card) => {
+    card.addEventListener("dragstart", (e) => {
+      draggingId = card.dataset.task;
+      card.classList.add("dragging");
+      e.dataTransfer.effectAllowed = "move";
+      e.dataTransfer.setData("text/plain", draggingId); // 一部ブラウザはデータ未設定だとdrop不可のため
+    });
+    card.addEventListener("dragend", () => card.classList.remove("dragging"));
+  });
+  root.querySelectorAll(".kanban-col[data-status-col]").forEach((col) => {
+    col.addEventListener("dragover", (e) => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; col.classList.add("drop-target"); });
+    col.addEventListener("dragleave", () => col.classList.remove("drop-target"));
+    col.addEventListener("drop", (e) => {
+      e.preventDefault();
+      col.classList.remove("drop-target");
+      const taskId = draggingId || e.dataTransfer.getData("text/plain");
+      draggingId = null;
+      if (!taskId) return;
+      const task = tasks.find((t) => t.id === taskId);
+      const newStatus = col.dataset.statusCol;
+      if (!task || task.status === newStatus) return;
+      const prevStatus = task.status;
+      const changed = applyStatusChange(task, newStatus, `ドラッグ&ドロップで状態変更: ${prevStatus} → ${newStatus}`);
+      if (changed) {
+        lastDragChange = { taskId: task.id, taskTitle: task.title, prevStatus, newStatus };
+        toast(`「${task.title}」を${newStatus}に変更しました`, "good");
+        render(root);
+      }
+    });
+  });
+}
+
+// v2.18: Word/Excel出力。docx/xlsxを生成する外部ライブラリを持ち込まずに
+// 実際のWord/Excelで開けるファイルを作る、昔からある軽量な手法 —
+// 「見た目は普通のHTML（テーブル）だが、拡張子を.doc/.xlsにして保存する」。
+// Word・ExcelともHTMLをネイティブ形式として認識して開くため、これで
+// 実用上十分な「Word出力」「Excel出力」になる（真のOOXMLではないが、
+// 開けば普通に編集・保存し直せる）。
+function actionBoardFileBaseName() {
+  const now = new Date();
+  const pad2 = (n) => String(n).padStart(2, "0");
+  return `${now.getFullYear()}${pad2(now.getMonth() + 1)}${pad2(now.getDate())}${pad2(now.getHours())}${pad2(now.getMinutes())}ActionBoard`;
+}
+
+function taskRowsHtml(tasks, STATUSES) {
+  const today = new Date().toISOString().slice(0, 10);
+  return STATUSES.map((status) => tasks.filter((t) => t.status === status)).flat().map((t) => {
+    const overdue = t.dueDate && t.dueDate < today && t.status !== "対応済み" && t.status !== "効果確認済み";
+    return `<tr>
+      <td>${escapeHtml(t.status)}</td>
+      <td>${escapeHtml(db.itemById(t.itemId)?.name || "")}</td>
+      <td>${escapeHtml(t.title)}${t.severityFlag ? " 🚩" : ""}</td>
+      <td>${escapeHtml(t.assignee || "未割当")}</td>
+      <td>${escapeHtml(t.dueDate || "-")}${overdue ? "（超過）" : ""}</td>
+      <td>${escapeHtml(t.description || "")}</td>
+      <td>${escapeHtml(t.content || "")}</td>
+    </tr>`;
+  }).join("");
+}
+
+async function exportActionBoard(format, tasks, STATUSES) {
+  const isWord = format === "word";
+  const title = `改善課題一覧（${db.storeName(db.LOCAL_STORE_ID)} / ${new Date().toLocaleDateString("ja-JP")}時点）`;
+  const headerCells = ["状態", "項目", "課題名", "担当者", "期限", "説明", "対応内容"].map((h) => `<th>${h}</th>`).join("");
+  const html = `<!DOCTYPE html><html><head><meta charset="UTF-8">
+    <!--[if gte mso 9]><xml><x:ExcelWorkbook><x:ExcelWorksheets><x:ExcelWorksheet>
+    <x:Name>ActionBoard</x:Name><x:WorksheetOptions><x:DisplayGridlines/></x:WorksheetOptions>
+    </x:ExcelWorksheet></x:ExcelWorksheets></x:ExcelWorkbook></xml><![endif]-->
+    <style>
+      body { font-family: "Yu Gothic", "Meiryo", sans-serif; }
+      h1 { font-size: 16pt; }
+      table { border-collapse: collapse; width: 100%; }
+      th, td { border: 1px solid #999; padding: 4px 8px; font-size: 10.5pt; vertical-align: top; }
+      th { background: #17324D; color: #fff; }
+    </style>
+  </head><body>
+    <h1>${escapeHtml(title)}</h1>
+    <table><thead><tr>${headerCells}</tr></thead><tbody>${taskRowsHtml(tasks, STATUSES)}</tbody></table>
+  </body></html>`;
+
+  const filename = actionBoardFileBaseName() + (isWord ? ".doc" : ".xls");
+  const mime = isWord ? "application/msword" : "application/vnd.ms-excel";
+  const blob = new Blob([html], { type: mime });
+
+  if (isDesktop) {
+    const exportDir = (db.brand.exportDir || nativeInfo.reportsDir || "").trim();
+    if (!exportDir) { toast("保存先フォルダが確認できません。設定画面をご確認ください。", "bad"); return; }
+    const path = joinPath(exportDir, filename);
+    try {
+      await saveBlobToPath(path, blob);
+      toast(`保存しました: ${path}`, "good");
+      setTimeout(() => revealInExplorerToast(path), 800);
+    } catch (err) {
+      toast("保存に失敗しました: " + err.message, "bad");
+    }
+  } else {
+    downloadBlob(filename, blob);
+    toast("ダウンロードしました", "good");
+  }
 }
 
 function commentSearchUI(prefix, initialSelected) {
@@ -116,7 +264,7 @@ function openTaskForm(root, prefill) {
     <div class="field"><label>説明</label><textarea id="fDesc">${escapeHtml(prefill?.description||"")}</textarea></div>
     <div class="field-row">
       <div class="field"><label>担当者</label><input type="text" id="fAssignee"></div>
-      <div class="field"><label>期限</label><input type="date" id="fDue"></div>
+      <div class="field"><label>期限</label>${dateWidgetHtml("fDue", "")}</div>
     </div>
     <div class="field"><label>対応内容（予定）</label><textarea id="fContent"></textarea></div>
     <div class="field checkbox-row"><input type="checkbox" id="fSeverity"><label style="margin:0">重大コメント（安全・衛生・法令等）として個別フラグを付ける</label></div>
@@ -129,6 +277,7 @@ function openTaskForm(root, prefill) {
     r.querySelector("[data-close]").onclick = closeModal;
     r.querySelector("[data-cancel]").onclick = closeModal;
     wireCommentSearch(r, "new", selectedIds);
+    wireDateWidget(r, "fDue");
     r.querySelector("#saveTask").onclick = () => {
       const title = r.querySelector("#fTitle").value.trim();
       if (!title) { toast("課題名を入力してください", "bad"); return; }
@@ -187,7 +336,7 @@ function openTaskDetail(taskId, root) {
       <div class="field"><label>説明</label><textarea id="descField" ${editable ? "" : "disabled"}>${escapeHtml(task.description)}</textarea></div>
       <div class="field-row">
         <div class="field"><label>担当者</label><input type="text" id="assigneeField" value="${escapeHtml(task.assignee||"")}" ${editable?"":"disabled"}></div>
-        <div class="field"><label>期限</label><input type="date" id="dueField" value="${task.dueDate||""}" ${editable?"":"disabled"}></div>
+        <div class="field"><label>期限</label>${editable ? dateWidgetHtml("dueField", task.dueDate || "") : `<input type="date" id="dueField" value="${task.dueDate||""}" disabled>`}</div>
       </div>
       <div class="field"><label>対応内容</label><textarea id="contentField" ${editable?"":"disabled"}>${escapeHtml(task.content||"")}</textarea></div>
       <div class="field"><label>添付資料メモ（ファイル名等）</label><input type="text" id="attachField" value="${escapeHtml(task.attachmentsNote||"")}" ${editable?"":"disabled"}></div>
@@ -212,6 +361,7 @@ function openTaskDetail(taskId, root) {
     });
     if (editable) {
       wireCommentSearch(r, "edit", selectedIds);
+      wireDateWidget(r, "dueField");
       r.querySelector("#saveDetail").onclick = () => {
         const newStatus = r.querySelector("#statusSelect").value;
         const changes = [];
