@@ -468,10 +468,21 @@ function renderBrand(panel, root) {
       toast("開けませんでした: " + (result.error || "不明なエラー"), "bad");
     }
   };
+  // v2.13: pickFolder() returning {ok:false} is ambiguous by itself — it's
+  // the normal, expected shape both when the user clicks Cancel in the
+  // dialog AND when the dialog never opened at all (timeout / blocked).
+  // Only the latter is worth a toast; a plain cancel has no `error` field
+  // at all (see MainWindow.xaml.cs's pickFolder case) so we can tell them
+  // apart.
+  function toastIfPickFailed(picked) {
+    if (picked.timedOut) toast("応答がありませんでした（セキュリティソフトがブロックしている可能性があります）", "bad");
+    else if (picked.error) toast("開けませんでした: " + picked.error, "bad");
+    // else: user just clicked Cancel — nothing to say.
+  }
   const pickExportDirBtn = panel.querySelector("#pickExportDir");
   if (pickExportDirBtn) pickExportDirBtn.onclick = async () => {
     const picked = await pickFolder("PDF・Wordの書き出し先フォルダを選択してください");
-    if (!picked.ok) return;
+    if (!picked.ok) { toastIfPickFailed(picked); return; }
     panel.querySelector("#bExportDir").value = picked.path;
   };
   const openExportDirBtn = panel.querySelector("#openExportDir");
@@ -482,7 +493,7 @@ function renderBrand(panel, root) {
   const relocateBtn = panel.querySelector("#relocateDataDir");
   if (relocateBtn) relocateBtn.onclick = async () => {
     const picked = await pickFolder("新しい保存先フォルダを選択してください");
-    if (!picked.ok) return;
+    if (!picked.ok) { toastIfPickFailed(picked); return; }
     confirmDialog(
       `保存先を\n${picked.path}\nに変更します。アプリはデータ移動後に自動的に再起動します。よろしいですか？`,
       async () => {

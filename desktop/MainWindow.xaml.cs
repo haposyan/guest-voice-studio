@@ -29,7 +29,7 @@ public partial class MainWindow : Window
     // actually running the build they think they extracted — real-machine
     // feedback repeatedly turned out to be re-testing a stale exe via an old
     // desktop shortcut (see EnsureDesktopShortcut).
-    private const string AppVersion = "2.12.0";
+    private const string AppVersion = "2.13.0";
     private const string AppVersionDate = "2026年9月2日";
 
     private string _dataDir = "";
@@ -603,12 +603,15 @@ public partial class MainWindow : Window
                     // the user as "a toast said it's saving, then nothing".
                     // Racing it against a timeout turns that silent hang into
                     // a visible, logged failure instead.
+                    // Kept a couple seconds under native.js's own 10s
+                    // client-side timeout so this more specific, logged
+                    // timeout reply wins the race and reaches the UI first.
                     var printTask = Browser.CoreWebView2.PrintToPdfAsync(path);
-                    var winner = await System.Threading.Tasks.Task.WhenAny(printTask, System.Threading.Tasks.Task.Delay(TimeSpan.FromSeconds(20)));
+                    var winner = await System.Threading.Tasks.Task.WhenAny(printTask, System.Threading.Tasks.Task.Delay(TimeSpan.FromSeconds(8)));
                     if (winner != printTask)
                     {
-                        LogBridge($"printToPdf: TIMEOUT after 20s, path={path}");
-                        Reply(requestId, new { ok = false, error = "timeout" });
+                        LogBridge($"printToPdf: TIMEOUT after 8s, path={path}");
+                        Reply(requestId, new { ok = false, error = "timeout", timedOut = true });
                         break;
                     }
                     var success = await printTask;

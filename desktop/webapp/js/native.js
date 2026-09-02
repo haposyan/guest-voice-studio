@@ -30,7 +30,7 @@ if (isDesktop) {
 // .NET's own try/catch never sees, so the C# side's own Reply() never fires
 // either. Previously that left the JS Promise pending forever — the button
 // just "didn't respond" with no way to tell hang-from-block-from-bug. Every
-// call now times out on its own after 15s so the caller always gets an
+// call now times out on its own after 10s so the caller always gets an
 // answer, even if that answer is "timeout".
 function callNative(type, payload = {}) {
   if (!isDesktop) return Promise.resolve({ ok: false, error: "not-desktop" });
@@ -41,7 +41,7 @@ function callNative(type, payload = {}) {
         pending.delete(requestId);
         resolve({ ok: false, error: "timeout", timedOut: true });
       }
-    }, 25000);
+    }, 10000);
     pending.set(requestId, (data) => { clearTimeout(timer); resolve(data); });
     window.chrome.webview.postMessage(JSON.stringify({ type, requestId, ...payload }));
   });
