@@ -29,7 +29,7 @@ public partial class MainWindow : Window
     // actually running the build they think they extracted — real-machine
     // feedback repeatedly turned out to be re-testing a stale exe via an old
     // desktop shortcut (see EnsureDesktopShortcut).
-    private const string AppVersion = "2.11.0";
+    private const string AppVersion = "2.12.0";
     private const string AppVersionDate = "2026年9月2日";
 
     private string _dataDir = "";
@@ -484,12 +484,36 @@ public partial class MainWindow : Window
                     // parent folder with the file pre-selected/highlighted) —
                     // used after a direct PDF/Word save so the user can see
                     // exactly where the file landed without hunting for it.
+                    //
+                    // v2.12: this used to always Reply(ok:true) regardless of
+                    // whether Process.Start actually succeeded, AND every JS
+                    // call site fired it without awaiting the result — so a
+                    // real-machine report of "this button does nothing" gave
+                    // us zero diagnostic signal either way. Now it reports
+                    // truthfully, and (see native.js/settings.js/
+                    // reportstudio.js) callers surface that to a toast.
                     var path = root.GetProperty("path").GetString();
-                    if (!string.IsNullOrWhiteSpace(path) && File.Exists(path))
-                        Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{path}\"") { UseShellExecute = true });
-                    else if (!string.IsNullOrWhiteSpace(path) && Directory.Exists(path))
-                        Process.Start(new ProcessStartInfo("explorer.exe", $"\"{path}\"") { UseShellExecute = true });
-                    Reply(requestId, new { ok = true });
+                    LogBridge($"revealInExplorer: path={path}");
+                    try
+                    {
+                        if (!string.IsNullOrWhiteSpace(path) && File.Exists(path))
+                            Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{path}\"") { UseShellExecute = true });
+                        else if (!string.IsNullOrWhiteSpace(path) && Directory.Exists(path))
+                            Process.Start(new ProcessStartInfo("explorer.exe", $"\"{path}\"") { UseShellExecute = true });
+                        else
+                        {
+                            LogBridge($"revealInExplorer: not-found path={path}");
+                            Reply(requestId, new { ok = false, error = "not-found" });
+                            break;
+                        }
+                        LogBridge($"revealInExplorer: Process.Start returned normally, path={path}");
+                        Reply(requestId, new { ok = true });
+                    }
+                    catch (Exception ex)
+                    {
+                        LogBridge($"revealInExplorer: Process.Start threw: {ex}");
+                        Reply(requestId, new { ok = false, error = ex.Message });
+                    }
                     break;
                 }
                 case "pickSaveFile":

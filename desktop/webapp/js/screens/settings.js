@@ -10,7 +10,7 @@
 
 import { db, DATA_RETENTION_DAYS } from "../db.js";
 import { escapeHtml, toast, confirmDialog, openModal, closeModal } from "../components/ui.js";
-import { isDesktop, nativeInfo, revealInExplorer, pickSaveFile, pickOpenFile, pickFolder, writeFileBytes, readFileBytes, textToBase64, bytesToBase64, downloadBlob, requestUninstall, requestRelocateData, joinPath, openPath } from "../native.js";
+import { isDesktop, nativeInfo, revealInExplorerToast, pickSaveFile, pickOpenFile, pickFolder, writeFileBytes, readFileBytes, textToBase64, bytesToBase64, downloadBlob, requestUninstall, requestRelocateData, joinPath, openPath } from "../native.js";
 import { encryptBackup, decryptBackup } from "../backup.js";
 
 // 除外語タブは初期値では非表示（v2.6）：使う場面を想像しにくい、という
@@ -282,7 +282,7 @@ function renderBackup(panel) {
     </div>
   `;
   const openBackupsDirBtn = panel.querySelector("#openBackupsDir");
-  if (openBackupsDirBtn) openBackupsDirBtn.onclick = () => revealInExplorer(nativeInfo.backupsDir);
+  if (openBackupsDirBtn) openBackupsDirBtn.onclick = () => revealInExplorerToast(nativeInfo.backupsDir);
 
   let restoreFileText = null;
 
@@ -454,11 +454,19 @@ function renderBrand(panel, root) {
     { danger: true, okLabel: "編集する" }
   );
   const openDirBtn = panel.querySelector("#openDataDir");
-  if (openDirBtn) openDirBtn.onclick = () => revealInExplorer(nativeInfo.dataDir);
+  if (openDirBtn) openDirBtn.onclick = () => revealInExplorerToast(nativeInfo.dataDir);
   const openLogBtn = panel.querySelector("#openBridgeLog");
   if (openLogBtn) openLogBtn.onclick = async () => {
+    toast("開いています…", "");
     const result = await openPath(nativeInfo.bridgeLogPath);
-    if (!result.ok) toast("ログはまだありません（PDF保存やWordダウンロードなどを一度試した後に生成されます）", "");
+    if (result.ok) return;
+    if (result.error === "file-not-found") {
+      toast("ログはまだありません（PDF保存やWordダウンロードなどを一度試した後に生成されます）", "");
+    } else if (result.timedOut) {
+      toast("応答がありませんでした（セキュリティソフトがブロックしている可能性があります）", "bad");
+    } else {
+      toast("開けませんでした: " + (result.error || "不明なエラー"), "bad");
+    }
   };
   const pickExportDirBtn = panel.querySelector("#pickExportDir");
   if (pickExportDirBtn) pickExportDirBtn.onclick = async () => {
@@ -469,7 +477,7 @@ function renderBrand(panel, root) {
   const openExportDirBtn = panel.querySelector("#openExportDir");
   if (openExportDirBtn) openExportDirBtn.onclick = () => {
     const dir = panel.querySelector("#bExportDir").value.trim() || nativeInfo.reportsDir;
-    revealInExplorer(dir);
+    revealInExplorerToast(dir);
   };
   const relocateBtn = panel.querySelector("#relocateDataDir");
   if (relocateBtn) relocateBtn.onclick = async () => {
@@ -571,7 +579,8 @@ async function downloadUsageGuide() {
       const path = joinPath(exportDir, filename);
       const base64 = bytesToBase64(new Uint8Array(buf));
       const result = await writeFileBytes(path, base64);
-      if (result.ok) { toast(`保存しました: ${path}`, "good"); revealInExplorer(path); }
+      if (result.ok) { toast(`保存しました: ${path}`, "good"); revealInExplorerToast(path); }
+      else if (result.timedOut) toast("応答がありませんでした（セキュリティソフトがブロックしている可能性があります）", "bad");
       else toast("保存に失敗しました: " + (result.error || ""), "bad");
     } else {
       downloadBlob(filename, new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" }));

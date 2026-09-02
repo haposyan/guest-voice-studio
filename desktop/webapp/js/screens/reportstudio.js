@@ -26,7 +26,7 @@ import { computeWordFrequencies } from "../tokenizer.js";
 import { renderWordCloud } from "../components/wordcloud.js";
 import * as analysis from "../analysis.js";
 import { escapeHtml, toast } from "../components/ui.js";
-import { isDesktop, nativeInfo, printToPdf, revealInExplorer, joinPath } from "../native.js";
+import { isDesktop, nativeInfo, printToPdf, revealInExplorerToast, joinPath } from "../native.js";
 
 let cfg;
 let currentReport = null;
@@ -292,7 +292,9 @@ async function handlePrint(wrap) {
   if (result.ok) {
     currentReport.lastPdfPath = path;
     toast(`PDFを保存しました: ${path}`, "good");
-    revealInExplorer(path);
+    revealInExplorerToast(path);
+  } else if (result.timedOut) {
+    toast("応答がありませんでした（セキュリティソフトがブロックしている可能性があります）", "bad");
   } else {
     toast("PDFの作成に失敗しました: " + (result.error || ""), "bad");
   }

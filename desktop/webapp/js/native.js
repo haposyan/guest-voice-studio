@@ -23,17 +23,49 @@ if (isDesktop) {
   });
 }
 
+// v2.12: real-machine testing showed native calls can go completely silent —
+// no success, no error, nothing — with symptoms consistent with the host
+// process being blocked (e.g. by corporate antivirus/EDR silently denying
+// file writes or child-process launches from this unsigned exe) at a level
+// .NET's own try/catch never sees, so the C# side's own Reply() never fires
+// either. Previously that left the JS Promise pending forever — the button
+// just "didn't respond" with no way to tell hang-from-block-from-bug. Every
+// call now times out on its own after 15s so the caller always gets an
+// answer, even if that answer is "timeout".
 function callNative(type, payload = {}) {
   if (!isDesktop) return Promise.resolve({ ok: false, error: "not-desktop" });
   const requestId = "req" + (++reqCounter) + "_" + Date.now();
   return new Promise((resolve) => {
-    pending.set(requestId, resolve);
+    const timer = setTimeout(() => {
+      if (pending.has(requestId)) {
+        pending.delete(requestId);
+        resolve({ ok: false, error: "timeout", timedOut: true });
+      }
+    }, 25000);
+    pending.set(requestId, (data) => { clearTimeout(timer); resolve(data); });
     window.chrome.webview.postMessage(JSON.stringify({ type, requestId, ...payload }));
   });
 }
 
 export function openPath(path) { return callNative("openPath", { path }); }
 export function revealInExplorer(path) { return callNative("revealInExplorer", { path }); }
+
+// v2.12: every call site used to fire-and-forget revealInExplorer() with no
+// await, so when a real-machine report came in as "this button does
+// nothing" we had no way to tell success from a silent failure — the JS
+// side never looked at the reply either way. This awaits it and surfaces
+// whatever actually happened via toast (imported lazily to avoid a
+// hard dependency for callers that don't need it — ui.js has no imports of
+// its own, so this is safe, not circular).
+export async function revealInExplorerToast(path) {
+  const { toast } = await import("./components/ui.js");
+  const result = await revealInExplorer(path);
+  if (result.ok) return result;
+  if (result.timedOut) toast("応答がありませんでした（セキュリティソフトがブロックしている可能性があります）", "bad");
+  else if (result.error === "not-found") toast("フォルダ・ファイルが見つかりませんでした: " + (path || ""), "bad");
+  else toast("開けませんでした: " + (result.error || "不明なエラー"), "bad");
+  return result;
+}
 export function pickSaveFile(suggestedName, filter, initialDirectory) { return callNative("pickSaveFile", { suggestedName, filter, initialDirectory }); }
 export function pickFolder(title) { return callNative("pickFolder", { title }); }
 export function requestUninstall() { return callNative("requestUninstall", {}); }
