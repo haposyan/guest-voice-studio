@@ -34,15 +34,10 @@ const SCREENS = [
   { key: "settings", en: "Settings", ja: "設定", mount: mountSettings },
 ];
 
-export function allowedStoreIds() {
-  return [db.LOCAL_STORE_ID];
-}
-
-// No roles anymore — every local action is allowed. Kept so screens that
-// still call can("editTasks") etc. don't need touching.
-export function can() {
-  return true;
-}
+// v2.19: moved to permissions.js to break a circular import (see that
+// file's header comment) — re-exported here so nothing outside this file
+// needs to know it moved.
+export { allowedStoreIds, can } from "./permissions.js";
 
 function currentScreenKey() {
   const hash = location.hash.replace("#", "");

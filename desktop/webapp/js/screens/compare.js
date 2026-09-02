@@ -7,7 +7,7 @@
 // ============================================================================
 
 import { db } from "../db.js";
-import { allowedStoreIds } from "../app.js";
+import { allowedStoreIds } from "../permissions.js";
 import { filterRecords, computeMetrics, itemBreakdown, periodPreset, delta, isLowSample } from "../analysis.js";
 import { computeWordFrequencies } from "../tokenizer.js";
 import { renderWordCloud } from "../components/wordcloud.js";

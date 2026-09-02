@@ -4,7 +4,7 @@
 // ============================================================================
 
 import { db } from "../db.js";
-import { allowedStoreIds, can } from "../app.js";
+import { allowedStoreIds, can } from "../permissions.js";
 import { filterRecords, computeMetrics, delta } from "../analysis.js";
 import { openModal, closeModal, escapeHtml, toast, confirmDialog, dateWidgetHtml, wireDateWidget } from "../components/ui.js";
 import { isDesktop, nativeInfo, joinPath, saveBlobToPath, downloadBlob, revealInExplorerToast } from "../native.js";

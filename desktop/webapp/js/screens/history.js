@@ -4,7 +4,7 @@
 // ============================================================================
 
 import { db, DATA_RETENTION_DAYS } from "../db.js";
-import { can } from "../app.js";
+import { can } from "../permissions.js";
 import { escapeHtml, confirmDialog, toast } from "../components/ui.js";
 
 let activeTab = "import";
