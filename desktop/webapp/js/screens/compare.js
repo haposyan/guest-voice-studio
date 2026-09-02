@@ -94,7 +94,7 @@ function render(root) {
 
     <div class="card">
       <div class="card-title"><h3>ワードクラウド比較</h3></div>
-      <div class="grid cols-2">
+      <div class="grid cols-2 compare-wordcloud">
         <div><h4>期間A：${escapeHtml(state.aLabel)}（${state.aStart}〜${state.aEnd}）／コメント${ccA}件</h4>${renderWordCloud(wordsA, { limit: 30 })}</div>
         <div><h4>期間B：${escapeHtml(state.bLabel)}（${state.bStart}〜${state.bEnd}）／コメント${ccB}件</h4>${renderWordCloud(wordsB, { limit: 30 })}</div>
       </div>

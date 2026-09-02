@@ -7,7 +7,6 @@ import { db } from "../db.js";
 import { allowedStoreIds, can } from "../permissions.js";
 import { filterRecords, computeMetrics, delta } from "../analysis.js";
 import { openModal, closeModal, escapeHtml, toast, confirmDialog, dateWidgetHtml, wireDateWidget } from "../components/ui.js";
-import { isDesktop, nativeInfo, joinPath, saveBlobToPath, downloadBlob, revealInExplorerToast } from "../native.js";
 
 const ALL_STATUSES = ["未対応", "対応中", "対応済み", "効果確認済み"];
 // 効果確認済みステータス・効果確認タブは初期値では非表示（Settings＞ブランド・保存設定で表示可）。
@@ -46,17 +45,16 @@ function render(root) {
   const editable = can("editTasks");
 
   root.innerHTML = `
-    <div class="row" style="justify-content:space-between;margin-bottom:14px;align-items:center">
+    <div class="row no-print" style="justify-content:space-between;margin-bottom:14px;align-items:center">
       <div class="row" style="gap:8px">
         ${lastDragChange ? `<button class="btn small" id="undoDragBtn">↶ 元に戻す（${escapeHtml(lastDragChange.taskTitle)}を${escapeHtml(lastDragChange.prevStatus)}に）</button>` : ""}
       </div>
       <div class="row" style="gap:8px">
-        <button class="btn small" id="exportWordBtn">📄 Word出力</button>
-        <button class="btn small" id="exportExcelBtn">📊 Excel出力</button>
+        <button class="btn small" id="printBoardBtn">🖨 PDFデータで印刷・保存</button>
         ${editable ? `<button class="btn primary" id="newTaskBtn">＋ 新規課題を登録</button>` : ""}
       </div>
     </div>
-    <div class="kanban">
+    <div class="kanban no-print">
       ${STATUSES.map((status) => {
         const list = tasks.filter((t) => t.status === status);
         return `<div class="kanban-col" data-status-col="${status}">
@@ -72,6 +70,11 @@ function render(root) {
         </div>`;
       }).join("")}
     </div>
+    <div class="print-only actionboard-print">
+      <h1>改善課題一覧（${escapeHtml(db.storeName(db.LOCAL_STORE_ID))} / ${escapeHtml(new Date().toLocaleDateString("ja-JP"))}時点）</h1>
+      <table><thead><tr><th>状態</th><th>項目</th><th>課題名</th><th>担当者</th><th>期限</th><th>説明</th><th>対応内容</th></tr></thead>
+      <tbody>${taskRowsHtml(tasks, STATUSES)}</tbody></table>
+    </div>
   `;
 
   root.querySelectorAll("[data-task]").forEach((el) => {
@@ -79,8 +82,7 @@ function render(root) {
   });
   const newBtn = root.querySelector("#newTaskBtn");
   if (newBtn) newBtn.onclick = () => openTaskForm(root);
-  root.querySelector("#exportWordBtn").onclick = () => exportActionBoard("word", tasks, STATUSES);
-  root.querySelector("#exportExcelBtn").onclick = () => exportActionBoard("excel", tasks, STATUSES);
+  root.querySelector("#printBoardBtn").onclick = () => printActionBoard();
 
   const undoBtn = root.querySelector("#undoDragBtn");
   if (undoBtn) undoBtn.onclick = () => {
@@ -132,16 +134,23 @@ function wireDragAndDrop(root, tasks) {
   });
 }
 
-// v2.18: Word/Excel出力。docx/xlsxを生成する外部ライブラリを持ち込まずに
-// 実際のWord/Excelで開けるファイルを作る、昔からある軽量な手法 —
-// 「見た目は普通のHTML（テーブル）だが、拡張子を.doc/.xlsにして保存する」。
-// Word・ExcelともHTMLをネイティブ形式として認識して開くため、これで
-// 実用上十分な「Word出力」「Excel出力」になる（真のOOXMLではないが、
-// 開けば普通に編集・保存し直せる）。
-function actionBoardFileBaseName() {
+// v2.19: Word/Excel出力（HTMLに.doc/.xls拡張子を付けて保存する方式）は
+// PDF/Word同様の理由で結局保存できない、というフィードバックのため撤去。
+// Report Studioと同じ「PDFデータで印刷・保存」（window.print()で印刷
+// ダイアログを開き、「PDFとして保存」を選んでもらう）方式に統一した。
+// 一覧そのもの（カンバン列）は印刷向きのレイアウトではないため、印刷時
+// だけ表示される専用のテーブル（.actionboard-print、CSS側で
+// @media printのときのみ表示）を別途用意している。
+function printActionBoard() {
   const now = new Date();
   const pad2 = (n) => String(n).padStart(2, "0");
-  return `${now.getFullYear()}${pad2(now.getMonth() + 1)}${pad2(now.getDate())}${pad2(now.getHours())}${pad2(now.getMinutes())}ActionBoard`;
+  const suggested = `${now.getFullYear()}${pad2(now.getMonth() + 1)}${pad2(now.getDate())}${pad2(now.getHours())}${pad2(now.getMinutes())}ActionBoard`;
+  const originalTitle = document.title;
+  document.title = suggested;
+  const restore = () => { document.title = originalTitle; window.removeEventListener("afterprint", restore); };
+  window.addEventListener("afterprint", restore);
+  setTimeout(restore, 20000);
+  window.print();
 }
 
 function taskRowsHtml(tasks, STATUSES) {
@@ -158,47 +167,6 @@ function taskRowsHtml(tasks, STATUSES) {
       <td>${escapeHtml(t.content || "")}</td>
     </tr>`;
   }).join("");
-}
-
-async function exportActionBoard(format, tasks, STATUSES) {
-  const isWord = format === "word";
-  const title = `改善課題一覧（${db.storeName(db.LOCAL_STORE_ID)} / ${new Date().toLocaleDateString("ja-JP")}時点）`;
-  const headerCells = ["状態", "項目", "課題名", "担当者", "期限", "説明", "対応内容"].map((h) => `<th>${h}</th>`).join("");
-  const html = `<!DOCTYPE html><html><head><meta charset="UTF-8">
-    <!--[if gte mso 9]><xml><x:ExcelWorkbook><x:ExcelWorksheets><x:ExcelWorksheet>
-    <x:Name>ActionBoard</x:Name><x:WorksheetOptions><x:DisplayGridlines/></x:WorksheetOptions>
-    </x:ExcelWorksheet></x:ExcelWorksheets></x:ExcelWorkbook></xml><![endif]-->
-    <style>
-      body { font-family: "Yu Gothic", "Meiryo", sans-serif; }
-      h1 { font-size: 16pt; }
-      table { border-collapse: collapse; width: 100%; }
-      th, td { border: 1px solid #999; padding: 4px 8px; font-size: 10.5pt; vertical-align: top; }
-      th { background: #17324D; color: #fff; }
-    </style>
-  </head><body>
-    <h1>${escapeHtml(title)}</h1>
-    <table><thead><tr>${headerCells}</tr></thead><tbody>${taskRowsHtml(tasks, STATUSES)}</tbody></table>
-  </body></html>`;
-
-  const filename = actionBoardFileBaseName() + (isWord ? ".doc" : ".xls");
-  const mime = isWord ? "application/msword" : "application/vnd.ms-excel";
-  const blob = new Blob([html], { type: mime });
-
-  if (isDesktop) {
-    const exportDir = (db.brand.exportDir || nativeInfo.reportsDir || "").trim();
-    if (!exportDir) { toast("保存先フォルダが確認できません。設定画面をご確認ください。", "bad"); return; }
-    const path = joinPath(exportDir, filename);
-    try {
-      await saveBlobToPath(path, blob);
-      toast(`保存しました: ${path}`, "good");
-      setTimeout(() => revealInExplorerToast(path), 800);
-    } catch (err) {
-      toast("保存に失敗しました: " + err.message, "bad");
-    }
-  } else {
-    downloadBlob(filename, blob);
-    toast("ダウンロードしました", "good");
-  }
 }
 
 function commentSearchUI(prefix, initialSelected) {

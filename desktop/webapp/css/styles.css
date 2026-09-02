@@ -9,6 +9,25 @@
   --card: #ffffff;
   --navy: #17324d;
   --navy-2: #0f2438;
+  /* v2.19: 16色のカラーテーマは気分転換ではなく色弱・低視力の方向けの
+     アクセシビリティ機能として、明るい色〜暗い色まで選べるようにする
+     必要がある。--navyは見出し文字など「常に明るいアイボリー背景の上の
+     文字」としても使われているため、そのままテーマの対象にすると明るい
+     色を選んだ瞬間に見出しが読めなくなる。そこで、テーマで変わるのは
+     「サイドバー背景・主要ボタンなど、白系の文字と組みで使う面」専用の
+     --brand/--brand-2に分離し、--navy/--navy-2は見出し文字用として常に
+     読みやすい濃い色に固定する。--sidebar-text系・--brand-contrast-text
+     は、選んだ--brandの明暗に応じてtheme.jsが白系／濃色系に一括で切替
+     える（コントラストが常に保たれるようにするため）。 */
+  --brand: #17324d;
+  --brand-2: #0f2438;
+  --brand-contrast-text: #fff;
+  --sidebar-text: #f3ecdd;
+  --sidebar-text-soft: #dfe6ee;
+  --sidebar-overlay-1: rgba(255,255,255,.08);
+  --sidebar-overlay-2: rgba(255,255,255,.12);
+  --sidebar-overlay-3: rgba(255,255,255,.25);
+  --sidebar-overlay-4: rgba(255,255,255,.3);
   --green: #23453b;
   --gold: #b28a4a;
   --gold-soft: #ddc48f;
@@ -62,8 +81,8 @@ button, input, select, textarea { font-family: inherit; font-size: inherit; }
 .sidebar {
   width: 232px;
   flex: 0 0 232px;
-  background: linear-gradient(180deg, var(--navy) 0%, var(--navy-2) 100%);
-  color: #f3ecdd;
+  background: linear-gradient(180deg, var(--brand) 0%, var(--brand-2) 100%);
+  color: var(--sidebar-text);
   padding: 22px 14px;
   display: flex;
   flex-direction: column;
@@ -82,7 +101,7 @@ button, input, select, textarea { font-family: inherit; font-size: inherit; }
   align-items: center;
   gap: 10px;
   padding: 6px 10px 22px;
-  color: #fff;
+  color: var(--sidebar-text);
 }
 .brand .mark {
   width: 34px; height: 34px; border-radius: 10px;
@@ -96,21 +115,21 @@ button, input, select, textarea { font-family: inherit; font-size: inherit; }
 .nav-item {
   display: flex; align-items: center; gap: 10px;
   padding: 10px 12px; border-radius: var(--radius-s);
-  color: #dfe6ee; text-decoration: none; cursor: pointer;
+  color: var(--sidebar-text-soft); text-decoration: none; cursor: pointer;
   border: none; background: none; width: 100%; text-align: left;
   font-size: .92rem;
   transition: background .15s ease, color .15s ease;
 }
-.nav-item:hover { background: rgba(255,255,255,.08); color: #fff; }
-.nav-item.active { background: rgba(178,138,74,.24); color: #fff; box-shadow: inset 3px 0 0 var(--gold-soft); }
+.nav-item:hover { background: var(--sidebar-overlay-1); color: var(--sidebar-text); }
+.nav-item.active { background: rgba(178,138,74,.24); color: var(--sidebar-text); box-shadow: inset 3px 0 0 var(--gold-soft); }
 .nav-item .en { display:block; font-size:.98rem; font-weight:600; }
 .nav-item .ja { display:block; font-size:.72rem; opacity:.72; }
 
-.sidebar-footer { margin-top: auto; padding: 12px 10px 0; border-top: 1px solid rgba(255,255,255,.12); }
-.user-chip { display:flex; align-items:center; gap:8px; color:#e8ecf1; font-size:.82rem; }
+.sidebar-footer { margin-top: auto; padding: 12px 10px 0; border-top: 1px solid var(--sidebar-overlay-2); }
+.user-chip { display:flex; align-items:center; gap:8px; color: var(--sidebar-text-soft); font-size:.82rem; }
 .user-chip .role-badge { font-size:.68rem; background: rgba(178,138,74,.3); padding:2px 8px; border-radius:20px; color:#f6ecd9; }
-.logout-btn { margin-top:10px; width:100%; background:none; border:1px solid rgba(255,255,255,.25); color:#e8ecf1; padding:7px; border-radius:var(--radius-s); cursor:pointer; font-size:.8rem; }
-.logout-btn:hover { background: rgba(255,255,255,.08); }
+.logout-btn { margin-top:10px; width:100%; background:none; border:1px solid var(--sidebar-overlay-3); color: var(--sidebar-text-soft); padding:7px; border-radius:var(--radius-s); cursor:pointer; font-size:.8rem; }
+.logout-btn:hover { background: var(--sidebar-overlay-1); }
 
 .main { flex: 1; min-width: 0; display:flex; flex-direction:column; }
 
@@ -177,7 +196,7 @@ button, input, select, textarea { font-family: inherit; font-size: inherit; }
   transition: all .15s ease;
 }
 .btn:hover { border-color: var(--gold); box-shadow: 0 0 0 3px rgba(178,138,74,.12); }
-.btn.primary { background: linear-gradient(135deg, var(--navy), var(--navy-2)); color: #fff; border-color: var(--navy); }
+.btn.primary { background: linear-gradient(135deg, var(--brand), var(--brand-2)); color: var(--brand-contrast-text); border-color: var(--brand); }
 .btn.primary:hover { box-shadow: 0 4px 14px rgba(23,50,77,.35); }
 .btn.gold { background: linear-gradient(135deg, var(--gold-soft), var(--gold)); color: #2a2214; border-color: var(--gold); }
 .btn.ghost { background: transparent; border-color: transparent; }
@@ -242,7 +261,7 @@ textarea { resize: vertical; min-height: 70px; }
   font-size: .78rem; background: var(--ivory-2); color: var(--ink); border: 1px solid var(--line);
   cursor: pointer; user-select: none;
 }
-.chip.active { background: var(--navy); color: #fff; border-color: var(--navy); }
+.chip.active { background: var(--brand); color: var(--brand-contrast-text); border-color: var(--brand); }
 .chip.gold.active { background: var(--gold); color: #2a2214; border-color: var(--gold); }
 /* v2.18: .chip defaults to a pointer cursor because most uses (filter
    selectors) really are clickable — but Lobby's rising/falling word lists
@@ -285,14 +304,14 @@ tr.clickable-row:hover { background: var(--ivory-2); }
 .zoom-control {
   position: fixed; right: 20px; bottom: 20px; z-index: 50;
   display: flex; align-items: center; gap: 2px;
-  background: var(--navy); border-radius: 8px; padding: 4px; opacity: .92;
+  background: var(--brand); border-radius: 8px; padding: 4px; opacity: .92;
   box-shadow: var(--shadow-m);
 }
 .zoom-control button {
-  border: none; background: transparent; color: #fff; cursor: pointer;
+  border: none; background: transparent; color: var(--brand-contrast-text); cursor: pointer;
   font-weight: 700; border-radius: 6px; height: 26px;
 }
-.zoom-control button:hover { background: rgba(255,255,255,.15); }
+.zoom-control button:hover { background: var(--sidebar-overlay-1); }
 .zoom-control #zoomOut, .zoom-control #zoomIn { width: 30px; font-size: .9rem; }
 .zoom-control #zoomReset { width: 56px; font-size: .82rem; padding: 0 4px; }
 
@@ -310,20 +329,30 @@ tr.clickable-row:hover { background: var(--ivory-2); }
 .wc-word.neutral { color: var(--info); }
 .wc-word .wc-override-mark { font-size: .6em; margin-left: 2px; opacity: .7; }
 
-/* Right-hand ranking table: no hover color-swap cue (list is read-only at a
-   glance — feedback was that the hover highlight read as "selectable" and
-   was distracting). Still clickable to open source comments.
+/* Right-hand ranking table: the word IS clickable (opens its source
+   comments), so it keeps the pointer cursor — v2.19 feedback was that
+   removing it made a genuinely interactive element look inert. What stays
+   suppressed is just the hover COLOR swap (still reads as an unrelated
+   "selected" state at a glance) and the whole-row background tint.
    v2.11: the word's own hover color was already neutralized below, but the
    generic `tbody tr:hover` rule (Tables, above) was still tinting the whole
    row's background on hover — screenshots from real-machine testing showed
    this is what actually reads as "the whole row looks selectable", not the
    word text color. Scoped this table out of that generic rule too. */
 .wc-ranking table tbody tr:hover { background: none; }
-.wc-ranking .wc-word { cursor: default; }
 .wc-ranking .wc-word:hover { color: inherit; transform: none; }
 .wc-ranking .wc-word.negative:hover { color: var(--bad); }
 .wc-ranking .wc-word.positive:hover { color: var(--good); }
 .wc-ranking .wc-word.neutral:hover { color: var(--info); }
+/* v2.19: Compareの期間A/B比較は、renderWordCloud()を表示のみに流用して
+   いて、クリックしても何も起きない（元コメントへのドリルダウンは
+   Guest Voice側のみの機能）。cursor:pointerを継承したままだと逆に
+   「押せそう」に見えてしまうため、この画面限定で無効にする。 */
+.compare-wordcloud .wc-word { cursor: default; }
+.compare-wordcloud .wc-word:hover { color: inherit; transform: none; }
+.compare-wordcloud .wc-word.negative:hover { color: var(--bad); }
+.compare-wordcloud .wc-word.positive:hover { color: var(--good); }
+.compare-wordcloud .wc-word.neutral:hover { color: var(--info); }
 .wc-legend { display:flex; gap:16px; align-items:center; padding: 4px 2px 12px; flex-wrap: wrap; }
 .wc-legend-item { display:inline-flex; align-items:center; gap:6px; font-size:.78rem; color: var(--ink-soft); }
 .wc-swatch { width:11px; height:11px; border-radius:50%; display:inline-block; }
@@ -352,10 +381,12 @@ tr.clickable-row:hover { background: var(--ivory-2); }
 .modal-header button { background:none; border:none; font-size:1.3rem; cursor:pointer; color: var(--ink-soft); }
 
 .toast-stack { position: fixed; bottom: 20px; right: 20px; display:flex; flex-direction:column; gap: 8px; z-index: 100; }
-.toast { background: var(--navy); color:#fff; padding: 11px 18px; border-radius: var(--radius-s); box-shadow: var(--shadow-m); font-size: .85rem; animation: toast-in .25s ease; max-width: 340px; }
-.toast.good { background: var(--good); }
-.toast.warn { background: var(--warn); }
-.toast.bad { background: var(--bad); }
+.toast { background: var(--brand); color: var(--brand-contrast-text); padding: 11px 18px; border-radius: var(--radius-s); box-shadow: var(--shadow-m); font-size: .85rem; animation: toast-in .25s ease; max-width: 340px; }
+/* good/warn/badは評価の意味を持つ固定色（テーマの対象外）なので、
+   --brand-contrast-textが暗色側になっていてもここは常に白文字で固定する。 */
+.toast.good { background: var(--good); color: #fff; }
+.toast.warn { background: var(--warn); color: #fff; }
+.toast.bad { background: var(--bad); color: #fff; }
 @keyframes toast-in { from { opacity:0; transform: translateY(8px); } to { opacity:1; transform: translateY(0); } }
 
 .celebrate {
@@ -391,7 +422,7 @@ tr.clickable-row:hover { background: var(--ivory-2); }
 
 .pill-toggle { display:inline-flex; background: var(--ivory-2); border-radius: 20px; padding: 3px; }
 .pill-toggle button { border:none; background:none; padding: 6px 14px; border-radius: 20px; font-size: .8rem; cursor:pointer; color: var(--ink-soft); font-weight:600; }
-.pill-toggle button.active { background: var(--navy); color: #fff; }
+.pill-toggle button.active { background: var(--brand); color: var(--brand-contrast-text); }
 
 .dropzone {
   border: 2px dashed var(--gold-soft); border-radius: var(--radius-l); padding: 40px 20px; text-align:center; color: var(--ink-soft);
@@ -425,10 +456,21 @@ tr.clickable-row:hover { background: var(--ivory-2); }
 .settings-nav button.active { background: var(--ivory-2); font-weight:700; color: var(--navy); }
 
 /* print report */
+.print-only { display: none; }
 @media print {
   .app-shell > .sidebar, .app-shell > .main > .topbar, .no-print { display: none !important; }
   .app-shell, .main, .content { display:block !important; padding:0 !important; margin:0 !important; }
   body { background: #fff; }
+  /* v2.19: Action Boardのカンバン列は印刷向きのレイアウトではないため、
+     印刷時だけ専用の一覧表（.actionboard-print、通常時は非表示）に
+     差し替える。同じ仕組みが必要になったら他の画面でも.print-only を
+     再利用できる。 */
+  .print-only { display: block !important; }
+  .actionboard-print { padding: 16mm; }
+  .actionboard-print h1 { font-size: 1.1rem; margin-bottom: 12px; }
+  .actionboard-print table { border-collapse: collapse; width: 100%; font-size: .8rem; }
+  .actionboard-print th, .actionboard-print td { border: 1px solid #999; padding: 5px 8px; vertical-align: top; }
+  .actionboard-print th { background: var(--brand); color: var(--brand-contrast-text); }
   /* v2.17: this used to also force padding:0, which — combined with the
      @page margin:0 below (needed to suppress Chromium's own URL/date/
      page-number header-footer) — left the printed PDF with NO margin at

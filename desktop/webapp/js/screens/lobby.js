@@ -74,12 +74,13 @@ export function mountLobby(root) {
   const completedThisMonth = myTasks.filter((t) => t.status === "効果確認済み" && t.completedAt && t.completedAt >= thisMonth.start && t.completedAt <= thisMonth.end);
   const doneThisMonth = myTasks.filter((t) => t.status === "対応済み" && t.completedAt && t.completedAt >= thisMonth.start && t.completedAt <= thisMonth.end);
 
-  // v2.18: 客室稼働率・回答率。PMS連携がないため月ごとに手入力する
-  // （db.occupancy、"YYYY-MM"キー）。宿泊者数が入力されていれば
-  // 回答率＝回答数÷宿泊者数で表示する。
+  // v2.19: 客室稼働率・宿泊者数の入力は不要とのことで廃止し、「客室稼働数」
+  // （＝その月に稼働した客室の実数）のみを手入力する項目にした。PMS連携が
+  // ないため月ごとに手入力する（db.occupancy、"YYYY-MM"キー）。回答率＝
+  // 回答数÷客室稼働数。
   const monthKey = thisMonth.start.slice(0, 7);
   const occ = db.occupancy[monthKey] || {};
-  const responseRate = occ.guestCount ? Math.round((curMetrics.responseCount / occ.guestCount) * 1000) / 10 : null;
+  const responseRate = occ.roomCount ? Math.round((curMetrics.responseCount / occ.roomCount) * 1000) / 10 : null;
 
   root.innerHTML = `
     <div class="card no-print" style="padding:10px 16px">
@@ -109,11 +110,10 @@ export function mountLobby(root) {
     </div>
 
     <div class="card no-print">
-      <div class="card-title"><h3>客室稼働率・回答率（${escapeHtml(thisMonth.label)}）</h3></div>
-      <p class="hint">PMSとの連携がないため、稼働率・宿泊者数は手入力です。宿泊者数を入力すると、回答率（回答数÷宿泊者数）が自動で計算されます。</p>
+      <div class="card-title"><h3>客室稼働数・回答率（${escapeHtml(thisMonth.label)}）</h3></div>
+      <p class="hint">PMSとの連携がないため、客室稼働数は手入力です。入力すると、回答率（回答数÷客室稼働数）が自動で計算されます。</p>
       <div class="field-row">
-        <div class="field"><label>客室稼働率（%）</label><input type="number" id="occRate" min="0" max="100" step="0.1" value="${occ.occupancyRate ?? ""}" placeholder="例：78.5"></div>
-        <div class="field"><label>延べ宿泊者数</label><input type="number" id="occGuests" min="0" step="1" value="${occ.guestCount ?? ""}" placeholder="例：420"></div>
+        <div class="field"><label>客室稼働数</label><input type="number" id="occRooms" min="0" step="1" value="${occ.roomCount ?? ""}" placeholder="例：420"></div>
         <div class="field"><label>回答率</label><div style="padding-top:8px;font-weight:700;font-size:1.1rem">${responseRate != null ? `${responseRate}%` : "-"}</div></div>
         <div class="field" style="justify-content:flex-end;display:flex"><button class="btn small primary" id="occSave">保存</button></div>
       </div>
@@ -157,13 +157,9 @@ export function mountLobby(root) {
   if (thisBtn) thisBtn.onclick = () => { monthOffset = 0; mountLobby(root); };
 
   root.querySelector("#occSave").onclick = () => {
-    const rate = root.querySelector("#occRate").value;
-    const guests = root.querySelector("#occGuests").value;
+    const rooms = root.querySelector("#occRooms").value;
     const all = db.occupancy;
-    all[monthKey] = {
-      occupancyRate: rate === "" ? null : Number(rate),
-      guestCount: guests === "" ? null : Number(guests),
-    };
+    all[monthKey] = { roomCount: rooms === "" ? null : Number(rooms) };
     db.occupancy = all;
     toast("保存しました", "good");
     mountLobby(root);
