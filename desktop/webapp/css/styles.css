@@ -377,7 +377,19 @@ tbody tr:hover { background: var(--ivory-2); }
   .app-shell, .main, .content { display:block !important; padding:0 !important; margin:0 !important; }
   body { background: #fff; }
   .report-page { box-shadow:none !important; border: none !important; padding: 0 !important; }
+  /* v2.16: the PDF fallback (window.print(), see reportstudio.js) waits
+     ~1.2s before opening the print dialog so a toast can explain what's
+     happening — but that toast (and the persistent zoom control) were
+     still on-screen and got captured into the printed page/PDF itself. */
+  .toast-stack, .zoom-control { display: none !important; }
 }
+/* Chromium reserves margin space for its own URL/date/page-number header
+   and footer unless the page's own @page margin is zero — there's no CSS
+   way to remove just the browser-added text while keeping page margins, so
+   .report-page supplies its own 16mm padding instead (see below) and the
+   @page margin here is zero. The "その他の設定 > ヘッダーとフッター"
+   checkbox in the print dialog is the other way to turn it off. */
+@page { margin: 0; }
 .report-page { background:#fff; width: 210mm; min-height: 297mm; margin: 0 auto; padding: 16mm; box-shadow: var(--shadow-m); border-radius: 4px; }
 .report-header { display:flex; justify-content:space-between; align-items:flex-start; border-bottom: 2px solid var(--navy); padding-bottom: 10px; margin-bottom: 16px; }
 .report-header .company { font-weight:700; color: var(--navy); }

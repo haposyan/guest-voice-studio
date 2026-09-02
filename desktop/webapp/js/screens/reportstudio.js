@@ -259,13 +259,16 @@ function saveReportRecord() {
   return rec;
 }
 
-// 例：202609010949GuestVoiceReport（西暦4桁+月2桁+日2桁+時2桁+分2桁、保存を
-// 押した「今」の時刻。以前の「お客様の声_村名_期間」という名前は、同じ条件で
-// 複数回保存すると同名になり上書きされがちだった）。
+// v2.16: 例：20260901-20260902GuestVoiceReport（報告期間の開始日〜終了日、
+// 西暦8桁ずつ）。以前は「保存を押した今の時刻」だったが、報告期間の方が
+// ファイルを見分ける手がかりとして分かりやすいとのフィードバックで変更。
+// さらにその前の「お客様の声_村名_期間」は、同じ条件で複数回保存すると
+// 同名になり上書きされがちだったため一度廃止した経緯がある — 期間ベースの
+// 名前でも同じ問題はあり得るが（同じ期間で２回保存すると同名になる）、
+// 見分けやすさを優先するとの判断。
 function reportFileBaseName() {
-  const now = new Date();
-  const pad2 = (n) => String(n).padStart(2, "0");
-  return `${now.getFullYear()}${pad2(now.getMonth() + 1)}${pad2(now.getDate())}${pad2(now.getHours())}${pad2(now.getMinutes())}GuestVoiceReport`;
+  const compact = (d) => (d || "").replace(/-/g, "");
+  return `${compact(currentReport?.cfg?.periodStart)}-${compact(currentReport?.cfg?.periodEnd)}GuestVoiceReport`;
 }
 
 // v2.10: 保存の都度「名前を付けて保存」ダイアログを出す方式は、複数ラウンドの
@@ -286,19 +289,33 @@ function reportFileBaseName() {
 // した。PDFのバイト列だけをWebView2から受け取り、Blobダウンロードとして
 // 発火させ、保存先パスの指定はCoreWebView2.DownloadStartingで横取りする
 // （native.js の saveBlobToPath 参照）。
+// v2.16: Chromium's print-to-PDF flow suggests document.title as the
+// default filename in the resulting Save As dialog — a well-known trick for
+// controlling that suggestion without any native involvement. Restores the
+// real title on "afterprint", which fires whether the user actually saved
+// or cancelled.
+function printViaDialog(suggestedBaseName) {
+  const originalTitle = document.title;
+  document.title = suggestedBaseName;
+  const restore = () => { document.title = originalTitle; window.removeEventListener("afterprint", restore); };
+  window.addEventListener("afterprint", restore);
+  setTimeout(restore, 20000); // safety net in case afterprint never fires
+  window.print();
+}
+
 async function handlePrint(wrap) {
   saveReportRecord();
+  const suggested = reportFileBaseName();
   if (!isDesktop) {
-    window.print();
+    printViaDialog(suggested);
     return;
   }
-  const suggested = reportFileBaseName() + ".pdf";
   const exportDir = (db.brand.exportDir || nativeInfo.reportsDir || "").trim();
   if (!exportDir) {
     toast("保存先フォルダが確認できません。設定画面をご確認ください。", "bad");
     return;
   }
-  const path = joinPath(exportDir, suggested);
+  const path = joinPath(exportDir, suggested + ".pdf");
   toast("PDFを作成しています…", "");
   const result = await printToPdfBlob();
   if (!result.ok) {
@@ -313,7 +330,7 @@ async function handlePrint(wrap) {
     // needs one extra manual step instead of being fully automatic.
     if (result.timedOut) toast("自動作成がタイムアウトしました。印刷ダイアログを開きます（「Microsoft Print to PDF」を選択して保存してください）…", "");
     else toast("自動作成に失敗しました。印刷ダイアログを開きます（「Microsoft Print to PDF」を選択して保存してください）…", "");
-    setTimeout(() => window.print(), 1200);
+    setTimeout(() => printViaDialog(suggested), 1200);
     return;
   }
   try {

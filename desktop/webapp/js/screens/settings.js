@@ -543,10 +543,10 @@ function openAboutModal() {
     ${isDesktop ? `
     <div class="card" style="margin:6px 0">
       <div class="card-title"><h3 style="font-size:.9rem">📄 使い方概要（Word）</h3></div>
-      <p class="hint">ダウンロードせずとも、インストールフォルダ内に最初から入っています。以下のパスをコピーしてエクスプローラーのアドレス欄に貼り付けても開けます。</p>
+      <p class="hint">ダウンロードせずとも、インストールフォルダ内に最初から入っています。下のボタンでパスをコピーし、エクスプローラーのアドレス欄に貼り付けて開いてください。</p>
       <div class="path-box"><span style="user-select:text">${escapeHtml(nativeInfo.usageGuidePath || "")}</span></div>
       <div class="row" style="gap:8px;margin-top:8px">
-        <button class="btn small" id="openUsageGuideFile">エクスプローラーで開く</button>
+        <button class="btn small" id="copyUsageGuidePath">パスをコピー</button>
         <button class="btn small" id="downloadUsageGuide">ダウンロードで保存し直す</button>
       </div>
     </div>
@@ -584,8 +584,15 @@ function openAboutModal() {
   `, { width: 620, onMount: (r) => {
     r.querySelector("[data-close]").onclick = closeModal;
     r.querySelector("#downloadUsageGuide").onclick = () => downloadUsageGuide();
-    const openUsageBtn = r.querySelector("#openUsageGuideFile");
-    if (openUsageBtn) openUsageBtn.onclick = () => revealInExplorerToast(nativeInfo.usageGuidePath);
+    const copyPathBtn = r.querySelector("#copyUsageGuidePath");
+    if (copyPathBtn) copyPathBtn.onclick = async () => {
+      try {
+        await navigator.clipboard.writeText(nativeInfo.usageGuidePath || "");
+        toast("パスをコピーしました", "good");
+      } catch (err) {
+        toast("コピーに失敗しました。上の欄を選択してCtrl+Cでコピーしてください。", "bad");
+      }
+    };
   } });
 }
 
