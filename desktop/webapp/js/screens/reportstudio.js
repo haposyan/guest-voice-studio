@@ -31,20 +31,46 @@ import { isDesktop, nativeInfo, printToPdfBlob, revealInExplorerToast, joinPath,
 
 let cfg;
 let currentReport = null;
+// v2.17: caches the live #previewWrap DOM node (not just its HTML) so that
+// navigating to another screen and back to Report Studio can reinsert the
+// exact same node — same event listeners, same live input values (e.g. an
+// edited summary, a selected 報告者) — instead of losing the generated
+// preview and making the user regenerate it. See render()/generatePreview().
+let cachedPreviewNode = null;
 
+// v2.17: navigating away from Report Studio and back used to wipe out
+// whatever preview had just been generated, forcing a re-generate every
+// time — this only re-initializes cfg/currentReport the first time this
+// screen is ever mounted in this app session (they're module-level
+// variables, so they otherwise already survive navigation on their own).
+// A fresh app launch naturally starts over anyway, since that's a new page
+// load / new module instance — no explicit "reset on close" needed.
+let everMounted = false;
 export function mountReportStudio(root) {
-  const thisM = periodPreset("thisMonth");
-  const lastM = periodPreset("lastMonth");
-  cfg = {
-    storeIds: allowedStoreIds(),
-    itemIds: [],
-    periodStart: thisM.start, periodEnd: thisM.end,
-    compareStart: lastM.start, compareEnd: lastM.end,
-    type: "detail", // 要約版は廃止・詳細版のみ
-    includedComments: [],
-  };
-  currentReport = null;
+  if (!everMounted) {
+    everMounted = true;
+    const thisM = periodPreset("thisMonth");
+    const lastM = periodPreset("lastMonth");
+    cfg = {
+      storeIds: allowedStoreIds(),
+      itemIds: [],
+      periodStart: thisM.start, periodEnd: thisM.end,
+      compareStart: lastM.start, compareEnd: lastM.end,
+      type: "detail", // 要約版は廃止・詳細版のみ
+      includedComments: [],
+    };
+    currentReport = null;
+    cachedPreviewNode = null;
+  }
   render(root);
+  // Restore a previously generated preview when returning to this screen —
+  // but only here (screen mount), not from render()'s other internal call
+  // sites (filter-chip/date-field changes), which should still show the
+  // empty state and require a fresh "プレビュー生成" click as before, since
+  // cfg has changed and the cached preview no longer matches it.
+  if (currentReport && cachedPreviewNode) {
+    root.querySelector("#previewWrap")?.replaceWith(cachedPreviewNode);
+  }
 }
 
 function render(root) {
@@ -149,9 +175,9 @@ function generatePreview(root) {
         <div id="includedList" class="stack" style="max-height:140px;overflow-y:auto"></div>
       </div>
       <div class="row" style="justify-content:flex-end;margin-top:16px;gap:8px">
-        <button class="btn gold" id="printBtn">🖨 PDFとして保存</button>
+        <button class="btn gold" id="printBtn">🖨 PDFデータを印刷・保存</button>
       </div>
-      <p class="hint" style="text-align:right;margin-top:6px">保存したPDFは、お使いのメールソフトで手動で添付してお送りください。</p>
+      <p class="hint" style="text-align:right;margin-top:6px">保存したPDFは、お使いのメールソフトで手動で添付してお送りください。<br>印刷ダイアログが開いたら、プリンターの選択欄から「PDFとして保存」（または「Microsoft Print to PDF」）を選ぶと、PDFファイルとして保存できます。</p>
     </div>
     <div class="report-page" id="reportPage"></div>
   `;
@@ -163,6 +189,7 @@ function generatePreview(root) {
 
   currentReport.author = user.name;
   renderReportPage(wrap);
+  cachedPreviewNode = wrap; // see mountReportStudio() — restores this exact node on remount
 }
 
 function wireCommentPicker(wrap, root) {
@@ -316,7 +343,7 @@ async function handlePrint(wrap) {
     return;
   }
   const path = joinPath(exportDir, suggested + ".pdf");
-  toast("PDFを作成しています…", "");
+  toast("印刷用PDFの作成中…", "");
   const result = await printToPdfBlob();
   if (!result.ok) {
     // v2.15: the headless PDF path (printToPdfBlob, backed by WebView2's
@@ -326,10 +353,12 @@ async function handlePrint(wrap) {
     // tested code path (used by every website's print button) that isn't
     // driven through this app's own C# host at all. Falling back to it
     // automatically means the user still gets a working way to make a PDF
-    // (pick "Microsoft Print to PDF" as the printer) even though it now
-    // needs one extra manual step instead of being fully automatic.
-    if (result.timedOut) toast("自動作成がタイムアウトしました。印刷ダイアログを開きます（「Microsoft Print to PDF」を選択して保存してください）…", "");
-    else toast("自動作成に失敗しました。印刷ダイアログを開きます（「Microsoft Print to PDF」を選択して保存してください）…", "");
+    // (pick "PDFとして保存" as the printer) even though it now needs one
+    // extra manual step instead of being fully automatic.
+    // v2.17: kept this toast free of internal detail ("timeout" etc.) —
+    // it reads the same either way, since the user doesn't need to know
+    // which failure mode happened, just what to do next.
+    toast("印刷用PDFの作成中…", "");
     setTimeout(() => printViaDialog(suggested), 1200);
     return;
   }

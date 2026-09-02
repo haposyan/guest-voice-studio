@@ -228,7 +228,14 @@ textarea { resize: vertical; min-height: 70px; }
 table { width: 100%; border-collapse: collapse; font-size: .88rem; }
 th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
 th { color: var(--ink-soft); font-weight: 600; font-size: .76rem; text-transform: uppercase; letter-spacing: .03em; }
-tbody tr:hover { background: var(--ivory-2); }
+/* v2.17: removed the blanket tbody tr:hover highlight — audited every
+   screen and no <tr> anywhere in this app actually has a click handler, so
+   the hover cue was suggesting an action that didn't exist (Lobby's item
+   table, Guest Voice's record list, etc.). Rows that genuinely are
+   interactive (the wc-ranking word buttons, kanban cards) carry their own
+   cursor/hover styling already and are unaffected by this. If a table row
+   ever becomes genuinely clickable, add hover/cursor styling scoped to that
+   table specifically rather than reintroducing this globally. */
 .table-wrap { overflow-x: auto; }
 
 /* ---------- Zoom control (persistent, every screen — see app.js) ---------- */
@@ -376,7 +383,12 @@ tbody tr:hover { background: var(--ivory-2); }
   .app-shell > .sidebar, .app-shell > .main > .topbar, .no-print { display: none !important; }
   .app-shell, .main, .content { display:block !important; padding:0 !important; margin:0 !important; }
   body { background: #fff; }
-  .report-page { box-shadow:none !important; border: none !important; padding: 0 !important; }
+  /* v2.17: this used to also force padding:0, which — combined with the
+     @page margin:0 below (needed to suppress Chromium's own URL/date/
+     page-number header-footer) — left the printed PDF with NO margin at
+     all. .report-page's own 16mm padding is exactly what's supposed to
+     supply the visual margin here, so it must survive print. */
+  .report-page { box-shadow:none !important; border: none !important; }
   /* v2.16: the PDF fallback (window.print(), see reportstudio.js) waits
      ~1.2s before opening the print dialog so a toast can explain what's
      happening — but that toast (and the persistent zoom control) were

@@ -10,7 +10,7 @@
 
 import { db, DATA_RETENTION_DAYS } from "../db.js";
 import { escapeHtml, toast, confirmDialog, openModal, closeModal } from "../components/ui.js";
-import { isDesktop, nativeInfo, revealInExplorerToast, pickSaveFile, pickOpenFile, pickFolder, writeFileBytes, readFileBytes, textToBase64, downloadBlob, requestUninstall, requestRelocateData, joinPath, openPath, saveBlobToPath } from "../native.js";
+import { isDesktop, nativeInfo, revealInExplorerToast, pickFolder, downloadBlob, requestUninstall, requestRelocateData, joinPath, openPath, saveBlobToPath } from "../native.js";
 import { encryptBackup, decryptBackup } from "../backup.js";
 
 // 除外語タブは初期値では非表示（v2.6）：使う場面を想像しにくい、という
@@ -252,7 +252,8 @@ function renderBackup(panel) {
     <div class="card">
       <div class="card-title"><h3>バックアップを作成</h3></div>
       <p class="hint">全データ（回答・改善課題・設定など）をパスフレーズで暗号化した1ファイルに書き出します。別PCへ移す場合はこのファイルを使ってください（§7 バックアップ）。</p>
-      ${isDesktop ? `<div class="path-box" style="margin-bottom:10px"><span>既定の保存候補フォルダ: ${escapeHtml(nativeInfo.backupsDir || "")}</span><span class="spacer"></span><button class="btn small" id="openBackupsDir">エクスプローラーで開く</button></div>` : ""}
+      ${isDesktop ? `<div class="path-box" style="margin-bottom:10px"><span>保存先: ${escapeHtml(nativeInfo.backupsDir || "")}</span><span class="spacer"></span><button class="btn small" id="openBackupsDir">エクスプローラーで開く</button></div>
+      <p class="hint" style="color:var(--bad)">※セキュリティソフトでこのプログラムが許可されていない場合は保存・変更はされません。保存・変更ができない場合は移行後のパソコンで新たにCSVファイルを取り込む必要があります。必要に応じてPDFファイルを保存してください。</p>` : ""}
       <div class="field">
         <label>パスフレーズ</label><input type="password" id="bkPass1" placeholder="8文字以上">
         <p class="hint" style="margin-top:4px">※<strong>8文字以上</strong>で設定してください（上限なし）。8文字未満は作成できません。</p>
@@ -270,9 +271,9 @@ function renderBackup(panel) {
       <div class="field"><label>バックアップファイル</label>
         <div class="row" style="gap:8px">
           <input type="text" id="bkFilePath" readonly placeholder="ファイルが選択されていません" style="flex:1">
-          <button class="btn small" id="bkPickFile">${isDesktop ? "ファイルを選択" : "ファイルを開く"}</button>
+          <button class="btn small" id="bkPickFile">ファイルを選択</button>
         </div>
-        ${!isDesktop ? `<input type="file" id="bkFileInput" accept=".gvsbackup,.json" style="margin-top:6px">` : ""}
+        <input type="file" id="bkFileInput" accept=".gvsbackup,.json" style="display:none">
       </div>
       <div class="field">
         <label>パスフレーズ</label><input type="password" id="bkRestorePass">
@@ -286,6 +287,13 @@ function renderBackup(panel) {
 
   let restoreFileText = null;
 
+  // v2.17: バックアップの作成・復元も、PDF/Wordと同じ理由でネイティブの
+  // 保存/選択ダイアログ（pickSaveFile／pickOpenFile）に頼らない方式に統一。
+  // 作成はWebView2自身のダウンロード機構（saveBlobToPath、handlePrintの
+  // v2.14コメント参照）。復元はCSV取込と同じ<input type="file">（WebView2
+  // 自身のファイル選択、ネイティブブリッジを一切経由しない）に統一 ――
+  // 以前は復元だけデスクトップ版でpickOpenFileを使っていたが、そちらの方が
+  // むしろ不安定だったため、より単純で信頼性の高い方に揃えた。
   panel.querySelector("#bkExport").onclick = async () => {
     const p1 = panel.querySelector("#bkPass1").value;
     const p2 = panel.querySelector("#bkPass2").value;
@@ -294,41 +302,33 @@ function renderBackup(panel) {
     const state = db.exportState();
     const envelopeText = await encryptBackup(state, p1);
     const suggested = `guestvoicestudio_backup_${new Date().toISOString().slice(0,10)}.gvsbackup`;
+    const blob = new Blob([envelopeText], { type: "application/json" });
 
     if (isDesktop) {
-      const picked = await pickSaveFile(suggested, "Guest Voice Studio バックアップ (*.gvsbackup)|*.gvsbackup", nativeInfo.backupsDir);
-      if (!picked.ok) return;
-      const result = await writeFileBytes(picked.path, textToBase64(envelopeText));
-      if (result.ok) toast(`バックアップを保存しました: ${picked.path}`, "good");
-      else toast("保存に失敗しました: " + (result.error||""), "bad");
+      const backupsDir = (nativeInfo.backupsDir || "").trim();
+      if (!backupsDir) { toast("保存先フォルダが確認できません。", "bad"); return; }
+      const path = joinPath(backupsDir, suggested);
+      try {
+        await saveBlobToPath(path, blob);
+        toast(`バックアップを保存しました: ${path}`, "good");
+        setTimeout(() => revealInExplorerToast(path), 800);
+      } catch (err) {
+        toast("保存に失敗しました: " + err.message, "bad");
+      }
     } else {
-      downloadBlob(suggested, new Blob([envelopeText], { type: "application/json" }));
+      downloadBlob(suggested, blob);
       toast("バックアップをダウンロードしました", "good");
     }
     db.audit("backup_export", "all", "");
   };
 
-  panel.querySelector("#bkPickFile").onclick = async () => {
-    if (isDesktop) {
-      const picked = await pickOpenFile("Guest Voice Studio バックアップ (*.gvsbackup;*.json)|*.gvsbackup;*.json");
-      if (!picked.ok) return;
-      const result = await readFileBytes(picked.path);
-      if (!result.ok) { toast("読み込みに失敗しました", "bad"); return; }
-      restoreFileText = new TextDecoder().decode(Uint8Array.from(atob(result.base64), (c) => c.charCodeAt(0)));
-      panel.querySelector("#bkFilePath").value = picked.path;
-    } else {
-      panel.querySelector("#bkFileInput").click();
-    }
+  panel.querySelector("#bkPickFile").onclick = () => panel.querySelector("#bkFileInput").click();
+  panel.querySelector("#bkFileInput").onchange = async (e) => {
+    const f = e.target.files[0];
+    if (!f) return;
+    restoreFileText = await f.text();
+    panel.querySelector("#bkFilePath").value = f.name;
   };
-  const fileInput = panel.querySelector("#bkFileInput");
-  if (fileInput) {
-    fileInput.onchange = async () => {
-      const f = fileInput.files[0];
-      if (!f) return;
-      restoreFileText = await f.text();
-      panel.querySelector("#bkFilePath").value = f.name;
-    };
-  }
 
   panel.querySelector("#bkImport").onclick = () => {
     const pass = panel.querySelector("#bkRestorePass").value;
@@ -382,7 +382,7 @@ function renderBrand(panel, root) {
       <p class="hint">CSV原本は取込後に破棄され、保存されません。</p>
     </div>
     <div class="card">
-      <div class="card-title"><h3>保存先</h3></div>
+      <div class="card-title"><h3>システム格納先</h3></div>
       ${isDesktop ? `
         <p class="hint" style="margin-bottom:8px">初回起動時に選んだ場所に保存されています（管理者権限は不要／§7 保存先）。</p>
         <div class="path-box"><span>${escapeHtml(nativeInfo.dataDir || "")}</span><span class="spacer"></span>
@@ -390,12 +390,13 @@ function renderBrand(panel, root) {
           <button class="btn small primary" id="relocateDataDir" style="margin-left:6px">保存先を変更…</button>
         </div>
         <p class="hint" style="margin-top:8px">「保存先を変更」でDドライブなど別のフォルダを選ぶと、データを新しい場所へ移動したうえでアプリが自動的に再起動します（PC入れ替え時にDドライブだけ持って行きたい、というご要望への対応です）。移動中はアプリを閉じたままにしてください。</p>
+        <p class="hint" style="color:var(--bad)">※セキュリティソフトでこのプログラムが許可されていない場合は保存・変更はされません。</p>
       ` : `<p class="hint">ブラウザモードで実行中のため、ブラウザのlocalStorageに保存されています（開発・確認用）。</p>`}
     </div>
     ${isDesktop ? `
     <div class="card">
       <div class="card-title"><h3>PDF・Wordの書き出し先フォルダ</h3></div>
-      <p class="hint" style="margin-bottom:8px">Report Studioの「PDFとして保存」と、下の「このツールについて」からの仕様書ダウンロードは、保存の都度ダイアログで場所を尋ねず、ここで指定したフォルダへ直接保存されます（未指定の場合はReportsフォルダに保存されます）。保存後は自動でエクスプローラーが開き、ファイルが選択された状態で表示されます。</p>
+      <p class="hint" style="margin-bottom:8px">Report Studioの「PDFデータを印刷・保存」と、下の「このツールについて」からの仕様書ダウンロードは、保存の都度ダイアログで場所を尋ねず、ここで指定したフォルダへ直接保存されます（未指定の場合はReportsフォルダに保存されます）。保存後は自動でエクスプローラーが開き、ファイルが選択された状態で表示されます。</p>
       <div class="field">
         <label>書き出し先フォルダ</label>
         <div class="row" style="gap:8px">
@@ -404,6 +405,7 @@ function renderBrand(panel, root) {
           <button class="btn small primary" id="pickExportDir" style="margin-left:6px">フォルダを選択…</button>
         </div>
         <p class="hint">「フォルダを選択…」で選択ダイアログが開かない場合は、上の欄に直接パスを貼り付けて「保存」してください。</p>
+        <p class="hint" style="color:var(--bad)">※セキュリティソフトでこのプログラムが許可されていない場合は保存・変更はされません。</p>
       </div>
     </div>
     ` : ""}
