@@ -262,7 +262,13 @@ tbody tr:hover { background: var(--ivory-2); }
 
 /* Right-hand ranking table: no hover color-swap cue (list is read-only at a
    glance — feedback was that the hover highlight read as "selectable" and
-   was distracting). Still clickable to open source comments. */
+   was distracting). Still clickable to open source comments.
+   v2.11: the word's own hover color was already neutralized below, but the
+   generic `tbody tr:hover` rule (Tables, above) was still tinting the whole
+   row's background on hover — screenshots from real-machine testing showed
+   this is what actually reads as "the whole row looks selectable", not the
+   word text color. Scoped this table out of that generic rule too. */
+.wc-ranking table tbody tr:hover { background: none; }
 .wc-ranking .wc-word { cursor: default; }
 .wc-ranking .wc-word:hover { color: inherit; transform: none; }
 .wc-ranking .wc-word.negative:hover { color: var(--bad); }

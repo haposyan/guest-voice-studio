@@ -29,8 +29,8 @@ public partial class MainWindow : Window
     // actually running the build they think they extracted — real-machine
     // feedback repeatedly turned out to be re-testing a stale exe via an old
     // desktop shortcut (see EnsureDesktopShortcut).
-    private const string AppVersion = "2.10.0";
-    private const string AppVersionDate = "2026年9月1日";
+    private const string AppVersion = "2.11.0";
+    private const string AppVersionDate = "2026年9月2日";
 
     private string _dataDir = "";
     // Startup splash must stay up at least this long — the app loads so fast
@@ -138,6 +138,7 @@ public partial class MainWindow : Window
             dataDir = _dataDir,
             reportsDir = Path.Combine(_dataDir, "Reports"),
             backupsDir = Path.Combine(_dataDir, "Backups"),
+            bridgeLogPath = Path.Combine(_dataDir, "bridge.log"),
             appVersion = AppVersion,
             appVersionDate = AppVersionDate,
             windowsUserName = Environment.UserName,
@@ -421,14 +422,34 @@ public partial class MainWindow : Window
         }
     }
 
+    // v2.11: PDF保存・Wordダウンロードとも、実機で「トーストすら出ずに何も
+    // 起きない」という報告が複数ラウンド続いた。この環境ではWebView2の実GUIを
+    // 動かして再現できないため、原因を推測で直し続けるのではなく、次に同じ
+    // 状況が起きたときに実際の失敗理由（例外・タイムアウト・そもそも到達して
+    // いない等）が分かるよう、全コマンドの受信・応答をこのログに記録する。
+    // Settings画面の「診断ログを開く」から参照できる。
+    private void LogBridge(string message)
+    {
+        try
+        {
+            if (string.IsNullOrEmpty(_dataDir)) return;
+            var logPath = Path.Combine(_dataDir, "bridge.log");
+            File.AppendAllText(logPath, $"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff} {message}{Environment.NewLine}");
+        }
+        catch { }
+    }
+
     private async void CoreWebView2_WebMessageReceived(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
     {
         string? requestId = null;
+        string? typeForLog = null;
         try
         {
             using var doc = JsonDocument.Parse(e.WebMessageAsJson);
             var root = doc.RootElement;
             var type = root.GetProperty("type").GetString();
+            typeForLog = type;
+            LogBridge($"received type={type}");
             requestId = root.TryGetProperty("requestId", out var ridEl) ? ridEl.GetString() : null;
 
             switch (type)
@@ -548,8 +569,26 @@ public partial class MainWindow : Window
                 case "printToPdf":
                 {
                     var path = root.GetProperty("path").GetString()!;
+                    LogBridge($"printToPdf: path={path}");
                     Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-                    var success = await Browser.CoreWebView2.PrintToPdfAsync(path);
+                    // WebView2's headless PrintToPdfAsync has a known failure
+                    // mode on some machines (e.g. Print Spooler service
+                    // disabled/restricted — common in hardened corporate
+                    // environments) where it never completes and never
+                    // throws — the await just hangs forever, which reads to
+                    // the user as "a toast said it's saving, then nothing".
+                    // Racing it against a timeout turns that silent hang into
+                    // a visible, logged failure instead.
+                    var printTask = Browser.CoreWebView2.PrintToPdfAsync(path);
+                    var winner = await System.Threading.Tasks.Task.WhenAny(printTask, System.Threading.Tasks.Task.Delay(TimeSpan.FromSeconds(20)));
+                    if (winner != printTask)
+                    {
+                        LogBridge($"printToPdf: TIMEOUT after 20s, path={path}");
+                        Reply(requestId, new { ok = false, error = "timeout" });
+                        break;
+                    }
+                    var success = await printTask;
+                    LogBridge($"printToPdf: done success={success}, path={path}, exists={File.Exists(path)}");
                     Reply(requestId, new { ok = success, path });
                     break;
                 }
@@ -564,8 +603,10 @@ public partial class MainWindow : Window
                 {
                     var path = root.GetProperty("path").GetString()!;
                     var base64 = root.GetProperty("base64").GetString()!;
+                    LogBridge($"writeFileBytes: path={path}, base64Len={base64.Length}");
                     Directory.CreateDirectory(Path.GetDirectoryName(path)!);
                     await File.WriteAllBytesAsync(path, Convert.FromBase64String(base64));
+                    LogBridge($"writeFileBytes: done, path={path}, exists={File.Exists(path)}");
                     Reply(requestId, new { ok = true, path });
                     break;
                 }
@@ -588,6 +629,7 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
+            LogBridge($"EXCEPTION type={typeForLog} requestId={requestId}: {ex}");
             Reply(requestId, new { ok = false, error = ex.Message });
         }
     }
@@ -698,6 +740,8 @@ public partial class MainWindow : Window
         var wrapped = new Dictionary<string, object?> { ["requestId"] = requestId };
         foreach (var prop in payload.GetType().GetProperties())
             wrapped[prop.Name] = prop.GetValue(payload);
-        Browser.CoreWebView2.PostWebMessageAsJson(JsonSerializer.Serialize(wrapped));
+        var json = JsonSerializer.Serialize(wrapped);
+        LogBridge($"reply requestId={requestId}: {json}");
+        Browser.CoreWebView2.PostWebMessageAsJson(json);
     }
 }

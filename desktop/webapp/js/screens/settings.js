@@ -10,7 +10,7 @@
 
 import { db, DATA_RETENTION_DAYS } from "../db.js";
 import { escapeHtml, toast, confirmDialog, openModal, closeModal } from "../components/ui.js";
-import { isDesktop, nativeInfo, revealInExplorer, pickSaveFile, pickOpenFile, pickFolder, writeFileBytes, readFileBytes, textToBase64, bytesToBase64, downloadBlob, requestUninstall, requestRelocateData, joinPath } from "../native.js";
+import { isDesktop, nativeInfo, revealInExplorer, pickSaveFile, pickOpenFile, pickFolder, writeFileBytes, readFileBytes, textToBase64, bytesToBase64, downloadBlob, requestUninstall, requestRelocateData, joinPath, openPath } from "../native.js";
 import { encryptBackup, decryptBackup } from "../backup.js";
 
 // 除外語タブは初期値では非表示（v2.6）：使う場面を想像しにくい、という
@@ -417,6 +417,8 @@ function renderBrand(panel, root) {
         <span class="badge role">v${escapeHtml(nativeInfo.appVersion || "-")}（${escapeHtml(nativeInfo.appVersionDate || "-")}）</span>
       </div>
       <p class="hint">動作確認の際は、ここに表示されるバージョン番号が最新かご確認ください。古い番号のままの場合は、デスクトップショートカットが古いバージョンを指している可能性があります（ショートカットを削除し、最新版のexeを直接実行し直すと直ります）。</p>
+      ${isDesktop ? `<button class="btn small" id="openBridgeLog" style="margin-top:6px">診断ログを開く</button>
+      <p class="hint">PDF保存やWordダウンロードがうまくいかない場合、原因調査のため開発側にこのログの内容をお伝えいただくことがあります。</p>` : ""}
     </div>
     <div class="card">
       <div class="card-title"><h3>試作データのリセット</h3></div>
@@ -453,6 +455,11 @@ function renderBrand(panel, root) {
   );
   const openDirBtn = panel.querySelector("#openDataDir");
   if (openDirBtn) openDirBtn.onclick = () => revealInExplorer(nativeInfo.dataDir);
+  const openLogBtn = panel.querySelector("#openBridgeLog");
+  if (openLogBtn) openLogBtn.onclick = async () => {
+    const result = await openPath(nativeInfo.bridgeLogPath);
+    if (!result.ok) toast("ログはまだありません（PDF保存やWordダウンロードなどを一度試した後に生成されます）", "");
+  };
   const pickExportDirBtn = panel.querySelector("#pickExportDir");
   if (pickExportDirBtn) pickExportDirBtn.onclick = async () => {
     const picked = await pickFolder("PDF・Wordの書き出し先フォルダを選択してください");
