@@ -149,7 +149,26 @@ function renderPreview(root) {
   };
 }
 
-function commitImport(root) {
+// v2.22: 1万件を超えるようなCSVでは、実際の取込処理（重複判定・保存）に
+// 数秒かかることがある。処理自体は同期的なままだが（チャンク分割して
+// 非同期化するほどの規模ではないと判断）、重い処理を始める前に「取込中…」
+// の表示を確実に画面へ描画してから始めることで、「反応がない＝止まって
+// いる」ように見える問題を解消する。二重rAFはChromiumで描画が確実に
+// 1回はさまるのを待つ定番の書き方。
+function paintNow() {
+  return new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+}
+
+async function commitImport(root) {
+  const area = root.querySelector("#previewArea");
+  area.innerHTML = `
+    <div class="card">
+      <div class="card-title"><h3>取込中…</h3></div>
+      <p class="hint">${state.preview.totalRows}件を処理しています。件数が多い場合、数秒〜十数秒かかることがあります。このまま画面を閉じずにお待ちください。</p>
+    </div>
+  `;
+  await paintNow();
+
   const batchId = db.uid("batch");
   const existing = db.records;
   const result = importRows(state.parsed, db.itemMappings, db.stores, existing, batchId);
@@ -175,10 +194,9 @@ function commitImport(root) {
   db.importBatches = batches;
   db.audit("csv_import", batchId, `${state.file.name} 成功${result.success}件 重複${result.duplicate}件 エラー${result.error}件`);
 
-  const area = root.querySelector("#previewArea");
   area.innerHTML = `
     <div class="card">
-      <div class="card-title"><h3>取込結果</h3></div>
+      <div class="card-title"><h3>取込を完了しました</h3></div>
       <div class="grid cols-5">
         <div class="stat-tile"><div class="label">成功</div><div class="value" style="color:var(--good)">${result.success}</div></div>
         <div class="stat-tile"><div class="label">重複（除外）</div><div class="value" style="color:var(--ink-soft)">${result.duplicate}</div></div>

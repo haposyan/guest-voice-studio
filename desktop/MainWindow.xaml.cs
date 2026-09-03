@@ -29,7 +29,7 @@ public partial class MainWindow : Window
     // actually running the build they think they extracted — real-machine
     // feedback repeatedly turned out to be re-testing a stale exe via an old
     // desktop shortcut (see EnsureDesktopShortcut).
-    private const string AppVersion = "2.21.0";
+    private const string AppVersion = "2.22.0";
     private const string AppVersionDate = "2026年9月3日";
 
     private string _dataDir = "";
@@ -103,16 +103,33 @@ public partial class MainWindow : Window
             ? bundledRuntime
             : null;
 
+        // v2.22: "Alt+Tabで切替画面がカクつき、数秒経ってから切り替わる" report —
+        // this exact multi-second stall in the Alt+Tab/Task-View thumbnail
+        // switcher is a well-known Chromium-on-Windows issue: Windows' "native
+        // window occlusion tracking" (introduced Windows 10 2004+) periodically
+        // asks every top-level window whether it's actually visible, and
+        // Chromium's own GPU-accelerated compositor handles that poorly under
+        // DWM's live-thumbnail capture during a window switch, producing a
+        // multi-second hitch — unrelated to this app's own code, but only
+        // shows up because WebView2 embeds Chromium. Disabling that one
+        // Chromium feature is the standard fix (same flag used by VS Code,
+        // Slack, Teams and other Chromium/Electron-embedding apps for this
+        // exact symptom) and has no other user-visible effect.
+        var envOptions = new CoreWebView2EnvironmentOptions
+        {
+            AdditionalBrowserArguments = "--disable-features=CalculateNativeWinOcclusion",
+        };
+
         CoreWebView2Environment env;
         try
         {
-            env = await CoreWebView2Environment.CreateAsync(browserExecutableFolder: browserExecutableFolder, userDataFolder: webViewUserData);
+            env = await CoreWebView2Environment.CreateAsync(browserExecutableFolder: browserExecutableFolder, userDataFolder: webViewUserData, options: envOptions);
         }
         catch (Exception) when (browserExecutableFolder != null)
         {
             // Bundled runtime present but failed to load for some reason — retry
             // against whatever system runtime might be available as a last resort.
-            env = await CoreWebView2Environment.CreateAsync(userDataFolder: webViewUserData);
+            env = await CoreWebView2Environment.CreateAsync(userDataFolder: webViewUserData, options: envOptions);
         }
         await Browser.EnsureCoreWebView2Async(env);
 
