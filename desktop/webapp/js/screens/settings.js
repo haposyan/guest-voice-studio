@@ -535,6 +535,10 @@ function renderBrand(panel, root) {
     toast("初期化しました", "good");
     location.reload();
   }, { danger: true, okLabel: "リセットする" });
+  // v2.21: 自動アンインストールが失敗した場合（セキュリティソフトによる
+  // ブロック等）に、何が起きたか分かるようにし、手動での削除手順（正確な
+  // フォルダパス付き）を案内する。今までは「開始します…」の通知だけ出て、
+  // その後何も起きなくても失敗が分からなかった。
   const uninstallBtn = panel.querySelector("#uninstallBtn");
   if (uninstallBtn && isDesktop) uninstallBtn.onclick = () => confirmDialog(
     "Guest Voice Studioをアンインストールします。アプリ本体・データ・デスクトップショートカットが削除され、アプリは終了します（保存済みのPDFレポートは残ります）。よろしいですか？",
@@ -542,12 +546,44 @@ function renderBrand(panel, root) {
       db.audit("app_uninstall_requested", "app", "");
       toast("アンインストールを開始します…", "");
       const result = await requestUninstall();
-      if (!result.ok) toast("アンインストールを開始できませんでした: " + (result.error || ""), "bad");
+      if (!result.ok) {
+        if (result.timedOut) toast("応答がありませんでした（セキュリティソフトがブロックしている可能性があります）", "bad");
+        else toast("アンインストールを開始できませんでした: " + (result.error || ""), "bad");
+        openManualUninstallModal();
+      }
     },
     { danger: true, okLabel: "アンインストールする" }
   );
   const aboutCardTitle = panel.querySelector("#aboutCardTitle");
   if (aboutCardTitle) aboutCardTitle.onclick = () => openAboutModal();
+}
+
+// v2.21: 自動アンインストールに失敗した場合の代替手段。手動で削除すべき
+// フォルダ・ファイルを、実際のパス付きでそのまま案内する。
+function openManualUninstallModal() {
+  const appDir = nativeInfo.appDir || "（インストールフォルダ）";
+  const dataDir = nativeInfo.dataDir || "（システム格納先）";
+  const shortcutPath = nativeInfo.desktopShortcutPath || "デスクトップ ＞ Guest Voice Studio.lnk";
+  openModal(`
+    <div class="modal-header"><h3>手動でのアンインストール手順</h3><button data-close>&times;</button></div>
+    <p class="hint">自動アンインストールが実行できませんでした。お手数ですが、以下を手動で削除してください（順不同です）。</p>
+    <div class="field"><label>① アプリ本体のフォルダ</label>
+      <div class="path-box"><span style="user-select:text">${escapeHtml(appDir)}</span></div>
+      <p class="hint">このフォルダごと削除してください。</p>
+    </div>
+    <div class="field"><label>② デスクトップショートカット</label>
+      <div class="path-box"><span style="user-select:text">${escapeHtml(shortcutPath)}</span></div>
+    </div>
+    <div class="field"><label>③ データフォルダ（回答・課題・設定など。保存済みのPDFレポートも一緒に削除されます）</label>
+      <div class="path-box"><span style="user-select:text">${escapeHtml(dataDir)}</span></div>
+      <p class="hint">PDFレポートだけ残したい場合は、この中の「Reports」フォルダを先に別の場所へコピーしてから削除してください。</p>
+    </div>
+    <div class="row" style="justify-content:flex-end;margin-top:10px">
+      <button class="btn primary" data-close>閉じる</button>
+    </div>
+  `, { width: 560, onMount: (r) => {
+    r.querySelectorAll("[data-close]").forEach((b) => b.onclick = closeModal);
+  } });
 }
 
 // ---------------------------------------------------------------------------

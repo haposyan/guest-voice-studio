@@ -29,8 +29,8 @@ public partial class MainWindow : Window
     // actually running the build they think they extracted — real-machine
     // feedback repeatedly turned out to be re-testing a stale exe via an old
     // desktop shortcut (see EnsureDesktopShortcut).
-    private const string AppVersion = "2.20.0";
-    private const string AppVersionDate = "2026年9月2日";
+    private const string AppVersion = "2.21.0";
+    private const string AppVersionDate = "2026年9月3日";
 
     private string _dataDir = "";
     // v2.14: set by the "prepareDownload" bridge command just before JS
@@ -158,6 +158,12 @@ public partial class MainWindow : Window
             // user this file kept failing, but the file was on disk the
             // whole time).
             usageGuidePath = Path.Combine(AppContext.BaseDirectory, "webapp", "assets", "usage_guide.docx"),
+            // v2.21: exposed so Settings can show exact manual-uninstall
+            // instructions if the automated uninstall (a detached-process
+            // launch, same category of operation seen elsewhere in this app
+            // to be silently blocked by some security software) fails.
+            appDir = AppContext.BaseDirectory.TrimEnd('\\'),
+            desktopShortcutPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), "Guest Voice Studio.lnk"),
             appVersion = AppVersion,
             appVersionDate = AppVersionDate,
             windowsUserName = Environment.UserName,
@@ -766,14 +772,28 @@ public partial class MainWindow : Window
                 }
                 case "requestUninstall":
                 {
-                    // Confirmation already happened on the JS side (Settings＞
-                    // ブランド・保存設定). Reply first so the toast can render,
-                    // then hand off to a detached helper script that waits for
-                    // this process to exit before deleting anything — this
-                    // process can't delete its own running exe/dll files.
-                    Reply(requestId, new { ok = true });
-                    await System.Threading.Tasks.Task.Delay(300);
-                    StartUninstallHelperAndExit();
+                    // v2.21: this used to Reply(ok:true) unconditionally
+                    // *before* even attempting the helper-script write +
+                    // detached-process launch — so on a real machine where
+                    // that write/launch is silently blocked (the same
+                    // category of Process.Start/File.WriteAllText hazard
+                    // documented elsewhere in this file around security
+                    // software), the toast said "starting" and nothing
+                    // further ever happened, with no way to tell why.
+                    // TryStartUninstallHelper() now reports what actually
+                    // happened, and this only shuts down on confirmed success.
+                    var uninstallOk = TryStartUninstallHelper(out var uninstallError);
+                    LogBridge($"requestUninstall: ok={uninstallOk} error={uninstallError}");
+                    if (uninstallOk)
+                    {
+                        Reply(requestId, new { ok = true });
+                        await System.Threading.Tasks.Task.Delay(300);
+                        Application.Current.Shutdown();
+                    }
+                    else
+                    {
+                        Reply(requestId, new { ok = false, error = uninstallError });
+                    }
                     break;
                 }
                 default:
@@ -796,55 +816,71 @@ public partial class MainWindow : Window
     /// the data folder EXCEPT the Reports subfolder (so PDF reports the user
     /// already generated survive), then deletes itself.
     /// </summary>
-    private void StartUninstallHelperAndExit()
+    /// <summary>
+    /// Writes the detached uninstall helper script and launches it. Returns
+    /// false (with a real error message, never throws) instead of letting a
+    /// blocked File.WriteAllText/Process.Start silently do nothing — see the
+    /// v2.21 comment on the "requestUninstall" case for why that matters
+    /// here specifically.
+    /// </summary>
+    private bool TryStartUninstallHelper(out string? error)
     {
-        var appDir = AppContext.BaseDirectory.TrimEnd('\\');
-        var dataDir = _dataDir;
-        var desktopDir = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
-        var shortcutPath = Path.Combine(desktopDir, "Guest Voice Studio.lnk");
-        var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-        var locatorPath = Path.Combine(localAppData, "GuestVoiceStudio.location");
-        var stableIconPath = Path.Combine(localAppData, "GuestVoiceStudio.ico");
-        // Both the legacy (pre-v2.2) and current shortcut-consent marker
-        // filenames — harmless to remove whichever exists.
-        var markerPaths = new[]
+        try
         {
-            Path.Combine(localAppData, "GuestVoiceStudio.shortcut-created"),
-            Path.Combine(localAppData, "GuestVoiceStudio.shortcut-prompted-v2"),
-        };
-        var scriptPath = Path.Combine(Path.GetTempPath(), $"gvs_uninstall_{Guid.NewGuid():N}.ps1");
+            var appDir = AppContext.BaseDirectory.TrimEnd('\\');
+            var dataDir = _dataDir;
+            var desktopDir = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
+            var shortcutPath = Path.Combine(desktopDir, "Guest Voice Studio.lnk");
+            var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+            var locatorPath = Path.Combine(localAppData, "GuestVoiceStudio.location");
+            var stableIconPath = Path.Combine(localAppData, "GuestVoiceStudio.ico");
+            // Both the legacy (pre-v2.2) and current shortcut-consent marker
+            // filenames — harmless to remove whichever exists.
+            var markerPaths = new[]
+            {
+                Path.Combine(localAppData, "GuestVoiceStudio.shortcut-created"),
+                Path.Combine(localAppData, "GuestVoiceStudio.shortcut-prompted-v2"),
+            };
+            var scriptPath = Path.Combine(Path.GetTempPath(), $"gvs_uninstall_{Guid.NewGuid():N}.ps1");
 
-        var script = $$"""
-            $ErrorActionPreference = 'SilentlyContinue'
-            try { Wait-Process -Id {{Environment.ProcessId}} -Timeout 30 } catch {}
-            Start-Sleep -Seconds 1
-            $shortcut = '{{EscapePs(shortcutPath)}}'
-            if ($shortcut -and (Test-Path $shortcut)) { Remove-Item $shortcut -Force }
-            $dataDir = '{{EscapePs(dataDir)}}'
-            if ($dataDir -and (Test-Path $dataDir)) {
-              Get-ChildItem -LiteralPath $dataDir -Force | Where-Object { $_.Name -ne 'Reports' } | Remove-Item -Recurse -Force
-            }
-            $locator = '{{EscapePs(locatorPath)}}'
-            if ($locator -and (Test-Path $locator)) { Remove-Item $locator -Force }
-            $stableIcon = '{{EscapePs(stableIconPath)}}'
-            if ($stableIcon -and (Test-Path $stableIcon)) { Remove-Item $stableIcon -Force }
-            foreach ($marker in @('{{EscapePs(markerPaths[0])}}', '{{EscapePs(markerPaths[1])}}')) {
-              if ($marker -and (Test-Path $marker)) { Remove-Item $marker -Force }
-            }
-            $appDir = '{{EscapePs(appDir)}}'
-            if ($appDir -and (Test-Path $appDir)) { Remove-Item -LiteralPath $appDir -Recurse -Force }
-            Remove-Item -LiteralPath $MyInvocation.MyCommand.Path -Force
-            """;
-        File.WriteAllText(scriptPath, script);
+            var script = $$"""
+                $ErrorActionPreference = 'SilentlyContinue'
+                try { Wait-Process -Id {{Environment.ProcessId}} -Timeout 30 } catch {}
+                Start-Sleep -Seconds 1
+                $shortcut = '{{EscapePs(shortcutPath)}}'
+                if ($shortcut -and (Test-Path $shortcut)) { Remove-Item $shortcut -Force }
+                $dataDir = '{{EscapePs(dataDir)}}'
+                if ($dataDir -and (Test-Path $dataDir)) {
+                  Get-ChildItem -LiteralPath $dataDir -Force | Where-Object { $_.Name -ne 'Reports' } | Remove-Item -Recurse -Force
+                }
+                $locator = '{{EscapePs(locatorPath)}}'
+                if ($locator -and (Test-Path $locator)) { Remove-Item $locator -Force }
+                $stableIcon = '{{EscapePs(stableIconPath)}}'
+                if ($stableIcon -and (Test-Path $stableIcon)) { Remove-Item $stableIcon -Force }
+                foreach ($marker in @('{{EscapePs(markerPaths[0])}}', '{{EscapePs(markerPaths[1])}}')) {
+                  if ($marker -and (Test-Path $marker)) { Remove-Item $marker -Force }
+                }
+                $appDir = '{{EscapePs(appDir)}}'
+                if ($appDir -and (Test-Path $appDir)) { Remove-Item -LiteralPath $appDir -Recurse -Force }
+                Remove-Item -LiteralPath $MyInvocation.MyCommand.Path -Force
+                """;
+            File.WriteAllText(scriptPath, script);
 
-        Process.Start(new ProcessStartInfo("powershell.exe",
-            $"-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File \"{scriptPath}\"")
+            Process.Start(new ProcessStartInfo("powershell.exe",
+                $"-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File \"{scriptPath}\"")
+            {
+                UseShellExecute = true,
+                WindowStyle = ProcessWindowStyle.Hidden,
+            });
+
+            error = null;
+            return true;
+        }
+        catch (Exception ex)
         {
-            UseShellExecute = true,
-            WindowStyle = ProcessWindowStyle.Hidden,
-        });
-
-        Application.Current.Shutdown();
+            error = ex.Message;
+            return false;
+        }
     }
 
     /// <summary>
