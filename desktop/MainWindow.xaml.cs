@@ -29,7 +29,7 @@ public partial class MainWindow : Window
     // actually running the build they think they extracted — real-machine
     // feedback repeatedly turned out to be re-testing a stale exe via an old
     // desktop shortcut (see EnsureDesktopShortcut).
-    private const string AppVersion = "2.27.0";
+    private const string AppVersion = "2.28.0";
     private const string AppVersionDate = "2026年9月4日";
 
     private string _dataDir = "";
@@ -112,12 +112,25 @@ public partial class MainWindow : Window
         // DWM's live-thumbnail capture during a window switch, producing a
         // multi-second hitch — unrelated to this app's own code, but only
         // shows up because WebView2 embeds Chromium. Disabling that one
-        // Chromium feature is the standard fix (same flag used by VS Code,
-        // Slack, Teams and other Chromium/Electron-embedding apps for this
-        // exact symptom) and has no other user-visible effect.
+        // Chromium feature is the standard first fix (same flag used by VS
+        // Code, Slack, Teams and other Chromium/Electron-embedding apps for
+        // this exact symptom).
+        // v2.28: real-machine testing on the latest build (with the above
+        // flag already active) showed the exact same stutter still
+        // happening, unchanged — so on this particular machine, disabling
+        // occlusion tracking alone wasn't the fix. The next-most-common
+        // escalation for this class of report in Chromium/Electron apps is
+        // to disable GPU-accelerated compositing outright, which removes
+        // Chromium's DirectComposition/GPU compositor from the picture
+        // entirely (DWM then captures a plain software-rendered surface for
+        // the thumbnail, which doesn't have this interaction problem) —
+        // this app's UI has no heavy graphics/animation, so falling back to
+        // software rendering should be visually unnoticeable. Kept both
+        // flags together since the first is harmless even if it isn't what
+        // actually fixes it on this machine.
         var envOptions = new CoreWebView2EnvironmentOptions
         {
-            AdditionalBrowserArguments = "--disable-features=CalculateNativeWinOcclusion",
+            AdditionalBrowserArguments = "--disable-features=CalculateNativeWinOcclusion --disable-gpu-compositing --disable-gpu",
         };
 
         CoreWebView2Environment env;
