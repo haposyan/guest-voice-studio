@@ -29,7 +29,7 @@ public partial class MainWindow : Window
     // actually running the build they think they extracted — real-machine
     // feedback repeatedly turned out to be re-testing a stale exe via an old
     // desktop shortcut (see EnsureDesktopShortcut).
-    private const string AppVersion = "2.26.0";
+    private const string AppVersion = "2.27.0";
     private const string AppVersionDate = "2026年9月4日";
 
     private string _dataDir = "";

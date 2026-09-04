@@ -112,7 +112,17 @@ function wireDragAndDrop(root, tasks) {
     card.addEventListener("dragend", () => card.classList.remove("dragging"));
   });
   root.querySelectorAll(".kanban-col[data-status-col]").forEach((col) => {
-    col.addEventListener("dragover", (e) => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; col.classList.add("drop-target"); });
+    // v2.27: this column only accepts an internal task-card drag (started
+    // by the dragstart handler above, which never sets a "Files" type on
+    // dataTransfer) — not an OS file being dragged in (e.g. a CSV). Without
+    // this check, dragging a CSV over the board showed the "move" cursor
+    // here as if dropping it would do something, instead of the "🚫 not
+    // allowed" cursor app.js's window-level fallback shows everywhere a
+    // file drag isn't explicitly accepted (see that handler's comment).
+    col.addEventListener("dragover", (e) => {
+      if (e.dataTransfer && e.dataTransfer.types && e.dataTransfer.types.includes("Files")) return;
+      e.preventDefault(); e.dataTransfer.dropEffect = "move"; col.classList.add("drop-target");
+    });
     col.addEventListener("dragleave", () => col.classList.remove("drop-target"));
     col.addEventListener("drop", (e) => {
       e.preventDefault();

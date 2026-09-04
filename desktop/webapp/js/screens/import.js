@@ -28,7 +28,12 @@ export function mountImport(root) {
   const dropzone = root.querySelector("#dropzone");
   const fileInput = root.querySelector("#fileInput");
   dropzone.onclick = () => fileInput.click();
-  ["dragenter", "dragover"].forEach((ev) => dropzone.addEventListener(ev, (e) => { e.preventDefault(); dropzone.classList.add("drag-over"); }));
+  // v2.27: dropEffect="copy" here is what actually draws the normal
+  // (allowed) drag cursor over this dropzone, in contrast to app.js's
+  // window-level dragover fallback, which sets "none" ("🚫") everywhere
+  // else a file is dragged — see that handler's comment for how the two
+  // cooperate via e.defaultPrevented.
+  ["dragenter", "dragover"].forEach((ev) => dropzone.addEventListener(ev, (e) => { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; dropzone.classList.add("drag-over"); }));
   ["dragleave", "drop"].forEach((ev) => dropzone.addEventListener(ev, (e) => { e.preventDefault(); dropzone.classList.remove("drag-over"); }));
   dropzone.addEventListener("drop", (e) => {
     const f = e.dataTransfer.files[0];

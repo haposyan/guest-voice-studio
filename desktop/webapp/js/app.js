@@ -164,7 +164,24 @@ window.addEventListener("hashchange", () => {
 // (the app itself is replaced by a raw view of the file's contents). This
 // window-level fallback swallows any drop that isn't already claimed by a
 // more specific handler, instead of letting the browser navigate away.
-window.addEventListener("dragover", (e) => e.preventDefault());
+//
+// v2.27: "CSVファイルをドラッグ＆ドロップで取り込む際は、Import画面以外
+// には持ってこれないようにしてください（○に／みたいな表示も）" —
+// dragover's e.dataTransfer.dropEffect is what the OS actually reads to
+// decide which cursor to show while dragging (before any drop happens).
+// Import's #dropzone (and, for its own internal task-card dragging,
+// Action Board's kanban columns) call preventDefault() on dragover
+// themselves, which sets e.defaultPrevented — checking that here is how
+// this handler tells "a more specific target already claimed this
+// dragover" apart from "nothing wants this". Only in the latter case do
+// we set dropEffect="none", which is what actually draws the "🚫 ここには
+// 置けません" cursor; elsewhere we leave whatever the specific handler
+// already decided (e.g. Import's dropzone sets "copy").
+window.addEventListener("dragover", (e) => {
+  if (e.defaultPrevented) return; // a specific drop target (Import's dropzone, a kanban column) already handled this
+  e.preventDefault();
+  if (e.dataTransfer) e.dataTransfer.dropEffect = "none";
+});
 window.addEventListener("drop", (e) => e.preventDefault());
 
 render();
