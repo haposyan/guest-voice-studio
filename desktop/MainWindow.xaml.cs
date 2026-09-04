@@ -29,7 +29,7 @@ public partial class MainWindow : Window
     // actually running the build they think they extracted — real-machine
     // feedback repeatedly turned out to be re-testing a stale exe via an old
     // desktop shortcut (see EnsureDesktopShortcut).
-    private const string AppVersion = "2.29.0";
+    private const string AppVersion = "2.30.0";
     private const string AppVersionDate = "2026年9月4日";
 
     private string _dataDir = "";
@@ -104,36 +104,31 @@ public partial class MainWindow : Window
             : null;
 
         // v2.22: "Alt+Tabで切替画面がカクつき、数秒経ってから切り替わる" report —
-        // this exact multi-second stall in the Alt+Tab/Task-View thumbnail
-        // switcher is a well-known Chromium-on-Windows issue: Windows' "native
-        // window occlusion tracking" (introduced Windows 10 2004+) periodically
-        // asks every top-level window whether it's actually visible, and
-        // Chromium's own GPU-accelerated compositor handles that poorly under
-        // DWM's live-thumbnail capture during a window switch, producing a
-        // multi-second hitch — unrelated to this app's own code, but only
-        // shows up because WebView2 embeds Chromium. Disabling that one
-        // Chromium feature is the standard first fix (same flag used by VS
-        // Code, Slack, Teams and other Chromium/Electron-embedding apps for
-        // this exact symptom).
-        // v2.28 (REVERTED in v2.29): tried adding --disable-gpu-compositing
-        // --disable-gpu on top of the above, on the theory that removing
-        // Chromium's GPU compositor entirely would sidestep whatever it was
-        // doing that DWM's Alt+Tab thumbnail capture didn't like. Real-
-        // machine testing showed this was much worse than the original
-        // problem: --disable-gpu doesn't reliably fall back to a working
-        // software renderer in every WebView2/driver combination — on this
-        // machine it produced a blank white window after the splash screen
-        // (the page silently failed to paint anything at all). Reverted
-        // immediately; back to only the one flag that has a full release's
-        // worth of real-machine evidence behind it (v2.22–v2.27) with no
-        // downside seen. The Alt+Tab stutter itself is still open — do not
-        // re-attempt a GPU-disabling flag here without a way to verify it
-        // first; a blank/dead app is a far worse failure mode than a slow
-        // Alt+Tab switch.
-        var envOptions = new CoreWebView2EnvironmentOptions
-        {
-            AdditionalBrowserArguments = "--disable-features=CalculateNativeWinOcclusion",
-        };
+        // added --disable-features=CalculateNativeWinOcclusion, a normally
+        // well-documented, harmless fix for this exact symptom in other
+        // Chromium/Electron-embedding apps (VS Code, Slack, Teams).
+        // v2.28 (REVERTED in v2.29): tried also adding --disable-gpu-
+        // compositing --disable-gpu on top of that. On this specific
+        // machine that was far worse than the original problem — it
+        // produced a blank white window after the splash screen (nothing
+        // painted at all). Reverted that pair immediately.
+        // v2.30: further real-machine reports ("結構頻繁に固まってしまい、
+        // タスクマネージャーから終了しています") turned out, on checking the
+        // timeline, to have started right around v2.21〜v2.22 — i.e. the
+        // same release that first touched AdditionalBrowserArguments at
+        // all — not, as first assumed, from the CSV import. v2.28's flag
+        // already proved this specific machine's WebView2/GPU-driver/
+        // security-software combination reacts to browser-argument changes
+        // in ways the general "this flag is safe" documentation doesn't
+        // predict, so "CalculateNativeWinOcclusion is normally harmless
+        // elsewhere" is no longer good enough evidence to keep it here.
+        // Removed entirely — back to WebView2's untouched default launch,
+        // to establish a clean baseline and see whether the frequent
+        // freezing stops. This reopens the original Alt+Tab stutter as an
+        // unresolved, deprioritized cosmetic issue; a slow window switch is
+        // a far better failure mode than an app that hangs and has to be
+        // killed from Task Manager.
+        CoreWebView2EnvironmentOptions? envOptions = null;
 
         CoreWebView2Environment env;
         try
