@@ -77,6 +77,7 @@ export function pickOpenFile(filter) { return callNative("pickOpenFile", { filte
 export function printToPdf(path) { return callNative("printToPdf", { path }); }
 export function printToPdfBlob() { return callNative("printToPdfBlob", {}); }
 export function prepareDownload(path) { return callNative("prepareDownload", { path }); }
+export function checkFileExists(path) { return callNative("checkFileExists", { path }); }
 
 // Joins a folder and a filename with a single backslash, regardless of
 // whether the folder was typed/stored with a trailing one. Used by the
@@ -134,10 +135,34 @@ export function downloadBlob(filename, blob) {
 // destination path prepared on the C# side (prepareDownload) *before* the
 // click that starts the download, so this is async even though downloadBlob
 // itself is fire-and-forget.
+//
+// v2.24: prepareDownload() only sets up the redirect and replies
+// immediately — it does not wait for CoreWebView2_DownloadStarting to fire,
+// let alone for the download to actually finish, and nothing reported that
+// outcome back to JS. Every caller (PDF save, backup export) was declaring
+// "保存しました" success the instant this function returned, regardless of
+// whether a single byte ever reached disk — on a machine where security
+// software silently blocks that write (this session's running theory, now
+// confirmed to reach even this WebView2-download-based path, not just this
+// app's own direct File I/O), the result was a confident "success" toast
+// over data that was never actually saved, discovered only when a backup
+// taken this way turned out to be empty. Now polls for the file's real
+// existence (checkFileExists, a proper replied/timeout-protected bridge
+// call — unlike the download event, which has no completion signal back to
+// JS) before declaring success, and returns an honest {ok, error} instead
+// of assuming.
 export async function saveBlobToPath(path, blob) {
-  if (isDesktop) {
-    await prepareDownload(path);
-  }
   const filename = path.split(/[\\/]/).pop() || "download";
+  if (!isDesktop) {
+    downloadBlob(filename, blob);
+    return { ok: true };
+  }
+  await prepareDownload(path);
   downloadBlob(filename, blob);
+  for (let i = 0; i < 10; i++) {
+    await new Promise((r) => setTimeout(r, 400));
+    const r = await checkFileExists(path);
+    if (r.ok && r.exists) return { ok: true };
+  }
+  return { ok: false, error: "file-not-found-after-save" };
 }

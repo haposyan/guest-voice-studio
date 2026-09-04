@@ -29,7 +29,7 @@ public partial class MainWindow : Window
     // actually running the build they think they extracted — real-machine
     // feedback repeatedly turned out to be re-testing a stale exe via an old
     // desktop shortcut (see EnsureDesktopShortcut).
-    private const string AppVersion = "2.23.0";
+    private const string AppVersion = "2.24.0";
     private const string AppVersionDate = "2026年9月4日";
 
     private string _dataDir = "";
@@ -811,6 +811,29 @@ public partial class MainWindow : Window
                     {
                         Reply(requestId, new { ok = false, error = uninstallError });
                     }
+                    break;
+                }
+                // v2.24: "1万件取り込んだCSVが、拠点リセット後もバックアップから
+                // 戻せなかった" 調査中に判明 — prepareDownload/saveBlobToPath
+                // (PDF・Word・バックアップ保存すべてが通る経路) は、WebView2
+                // 自身のダウンロード機構に実際のディスク書き込みを肩代わり
+                // させているが、そのダウンロードが実際に完了したかどうかを
+                // 一切確認せずJS側へ返していた。CoreWebView2_DownloadStarting
+                // 内のDirectory.CreateDirectoryや、その先のブラウザプロセス
+                // 側の書き込み自体がセキュリティソフト等で阻まれても、
+                // JS側は常に「保存しました」と表示していた ― まさにこの
+                // セッションで繰り返し見てきた「応答を返す前に実際の結果を
+                // 見ていない」系の不具合と同じパターン。native.jsの
+                // saveBlobToPath()がダウンロード発火後にこれをポーリングし、
+                // 本当にファイルが存在するかを確認してから成否を返すように
+                // 変更した。
+                case "checkFileExists":
+                {
+                    var checkPath = root.TryGetProperty("path", out var cpEl) ? cpEl.GetString() : null;
+                    bool exists = false;
+                    try { exists = !string.IsNullOrWhiteSpace(checkPath) && File.Exists(checkPath); }
+                    catch (Exception ex) { LogBridge($"checkFileExists EXCEPTION path={checkPath}: {ex.Message}"); }
+                    Reply(requestId, new { ok = true, exists });
                     break;
                 }
                 default:

@@ -310,9 +310,19 @@ function renderBackup(panel) {
       if (!backupsDir) { toast("保存先フォルダが確認できません。", "bad"); return; }
       const path = joinPath(backupsDir, suggested);
       try {
-        await saveBlobToPath(path, blob);
-        toast(`バックアップを保存しました: ${path}`, "good");
-        setTimeout(() => revealInExplorerToast(path), 800);
+        const result = await saveBlobToPath(path, blob);
+        if (result.ok) {
+          toast(`バックアップを保存しました: ${path}`, "good");
+          setTimeout(() => revealInExplorerToast(path), 800);
+        } else {
+          // v2.24: saveBlobToPath now actually verifies the file landed on
+          // disk before reporting success — previously this always showed
+          // "保存しました" the instant the download was triggered, even when
+          // the write itself was silently blocked (e.g. by security
+          // software), which is how a backup could report success while
+          // containing nothing.
+          toast("バックアップの保存を確認できませんでした。セキュリティソフトにブロックされている可能性があります。保存先フォルダを開いてファイルの有無をご確認ください。", "bad");
+        }
       } catch (err) {
         toast("保存に失敗しました: " + err.message, "bad");
       }
@@ -431,9 +441,9 @@ function renderBrand(panel, root) {
       <p class="hint">PDF保存やWordダウンロードがうまくいかない場合、原因調査のため開発側にこのログの内容をお伝えいただくことがあります。</p>` : ""}
     </div>
     <div class="card">
-      <div class="card-title"><h3>試作データのリセット</h3></div>
-      <p class="hint">この端末に保存されたデータをすべて初期状態に戻します（初回設定からやり直します）。</p>
-      <button class="btn danger" id="resetBtn">全データをリセット</button>
+      <div class="card-title"><h3 style="color:var(--bad)">⚠ すべてのデータを完全に削除</h3></div>
+      <p class="hint"><strong>取り込んだアンケート回答・改善課題・作成済みの報告書・インポート履歴・設定など、この端末に保存されているデータをすべて完全に削除し、アプリを初回起動時の状態（休暇村を選ぶ画面）に戻します。バックアップを取っていない場合、削除したデータは二度と復元できません。</strong> 拠点名を変更したいだけの場合はこのボタンを使う必要はありません（この端末で担当する休暇村が実際に変わった場合のみ使用してください）。</p>
+      <button class="btn danger" id="resetBtn">すべてのデータを完全に削除する</button>
     </div>
     <div class="card">
       <div class="card-title"><h3>アンインストール</h3></div>
@@ -530,11 +540,41 @@ function renderBrand(panel, root) {
       { danger: true, okLabel: "移動して再起動する" }
     );
   };
-  panel.querySelector("#resetBtn").onclick = () => confirmDialog("すべてのデータを削除して初期状態（初回設定）に戻します。この操作は取り消せません。", () => {
-    db.resetAll();
-    toast("初期化しました", "good");
-    location.reload();
-  }, { danger: true, okLabel: "リセットする" });
+  // v2.24: このボタンは以前「試作データのリセット」という紛らわしい名前で、
+  // 単純な確認ダイアログ1回だけで即実行できた。実際には拠点情報だけでなく
+  // 取り込み済みの全アンケート回答・改善課題・報告書などを完全に削除する
+  // 操作であり、実際にこのボタンを「拠点のリセット」と誤解して押し、
+  // インポート直後のデータが失われる事故が起きた。名前・説明文を明確化
+  // した上で、誤クリックで即座に実行されないよう「削除する」と入力しない
+  // と実行ボタンが押せないダイアログに変更した。
+  panel.querySelector("#resetBtn").onclick = () => {
+    openModal(`
+      <div class="modal-header"><h3 style="color:var(--bad)">⚠ すべてのデータを完全に削除しますか？</h3><button data-close>&times;</button></div>
+      <p>取り込んだアンケート回答・改善課題・作成済みの報告書・インポート履歴・設定など、この端末に保存されているデータが<strong>すべて完全に削除</strong>され、元に戻せません。バックアップを取っていない場合、削除したデータは二度と復元できません。</p>
+      <p>よろしければ、下の欄に「<strong>削除する</strong>」と入力してください。</p>
+      <div class="field"><input type="text" id="resetConfirmInput" placeholder="削除する" autocomplete="off"></div>
+      <div class="row" style="justify-content:flex-end">
+        <button class="btn" data-cancel>キャンセル</button>
+        <button class="btn danger" id="resetConfirmOk" disabled>完全に削除する</button>
+      </div>
+    `, {
+      onMount: (root) => {
+        const input = root.querySelector("#resetConfirmInput");
+        const okBtn = root.querySelector("#resetConfirmOk");
+        root.querySelector("[data-close]").onclick = closeModal;
+        root.querySelector("[data-cancel]").onclick = closeModal;
+        input.oninput = () => { okBtn.disabled = input.value.trim() !== "削除する"; };
+        okBtn.onclick = () => {
+          if (input.value.trim() !== "削除する") return;
+          closeModal();
+          db.resetAll();
+          toast("初期化しました", "good");
+          location.reload();
+        };
+        input.focus();
+      },
+    });
+  };
   // v2.21: 自動アンインストールが失敗した場合（セキュリティソフトによる
   // ブロック等）に、何が起きたか分かるようにし、手動での削除手順（正確な
   // フォルダパス付き）を案内する。今までは「開始します…」の通知だけ出て、
@@ -672,9 +712,13 @@ async function downloadUsageGuide() {
       if (!exportDir) { toast("保存先フォルダが確認できません。設定画面をご確認ください。", "bad"); return; }
       const path = joinPath(exportDir, filename);
       const blob = new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" });
-      await saveBlobToPath(path, blob);
-      toast(`保存しました: ${path}`, "good");
-      setTimeout(() => revealInExplorerToast(path), 800);
+      const result = await saveBlobToPath(path, blob);
+      if (result.ok) {
+        toast(`保存しました: ${path}`, "good");
+        setTimeout(() => revealInExplorerToast(path), 800);
+      } else {
+        toast("保存を確認できませんでした。セキュリティソフトにブロックされている可能性があります。保存先フォルダをご確認ください。", "bad");
+      }
     } else {
       downloadBlob(filename, new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" }));
       toast("ダウンロードしました", "good");

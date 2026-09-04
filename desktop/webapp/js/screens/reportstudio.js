@@ -413,10 +413,21 @@ async function handlePrint(wrap) {
   }
   try {
     const blob = new Blob([base64ToBytes(result.base64)], { type: "application/pdf" });
-    await saveBlobToPath(path, blob);
-    currentReport.lastPdfPath = path;
-    toast(`PDFを保存しました: ${path}`, "good");
-    setTimeout(() => revealInExplorerToast(path), 800);
+    const saveResult = await saveBlobToPath(path, blob);
+    if (saveResult.ok) {
+      currentReport.lastPdfPath = path;
+      toast(`PDFを保存しました: ${path}`, "good");
+      setTimeout(() => revealInExplorerToast(path), 800);
+    } else {
+      // v2.24: saveBlobToPath now verifies the file actually landed on disk
+      // instead of assuming success the instant the download was triggered
+      // — a PDF could previously be silently blocked at this exact step
+      // (same class of issue as printToPdfBlob failing above) with no way
+      // to tell. Same fallback: window.print()'s dialog is a completely
+      // different, unblocked code path.
+      toast("印刷用PDFの作成中…", "");
+      setTimeout(() => printViaDialog(suggested), 1200);
+    }
   } catch (err) {
     toast("PDFの保存に失敗しました: " + err.message, "bad");
   }
