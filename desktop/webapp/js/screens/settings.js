@@ -249,12 +249,21 @@ function renderWords(panel, root) {
 // 管理は不要になった。db.recipients のデータ自体は互換のため残してある。
 // ---------------------------------------------------------------------------
 function renderBackup(panel) {
+  // v2.25: "フォルダへのアクセス権のくだりでバックアップが作成されない
+  // ...ダウンロードフォルダとかに作成するとかはできないの？" — バックアップは
+  // これまで常に固定の nativeInfo.backupsDir（%LOCALAPPDATA%配下）にしか
+  // 保存できなかったが、PDF・Wordは既に「ブランド・保存設定」タブの
+  // 書き出し先フォルダ（db.brand.exportDir）で任意の場所に変更できていた。
+  // セキュリティソフトがAppData配下だけを狙ってブロックし、ダウンロード
+  // フォルダ等は許可している可能性は十分あるため、バックアップも同じ設定を
+  // 使って任意のフォルダ（ダウンロード等）に切り替えられるようにする。
+  const backupsDirEffective = (db.brand.exportDir || nativeInfo.backupsDir || "").trim();
   panel.innerHTML = `
     <div class="card">
       <div class="card-title"><h3>バックアップを作成</h3></div>
       <p class="hint">全データ（回答・改善課題・設定など）をパスフレーズで暗号化した1ファイルに書き出します。別PCへ移す場合はこのファイルを使ってください（§7 バックアップ）。</p>
-      ${isDesktop ? `<div class="path-box" style="margin-bottom:10px"><span>保存先: ${escapeHtml(nativeInfo.backupsDir || "")}</span><span class="spacer"></span><button class="btn small" id="openBackupsDir">エクスプローラーで開く</button></div>
-      <p class="hint" style="color:var(--bad)">※セキュリティソフトでこのプログラムが許可されていない場合は保存・変更はされません。保存・変更ができない場合は移行後のパソコンで新たにCSVファイルを取り込む必要があります。必要に応じてPDFファイルを保存してください。</p>` : ""}
+      ${isDesktop ? `<div class="path-box" style="margin-bottom:10px"><span>保存先: ${escapeHtml(backupsDirEffective)}</span><span class="spacer"></span><button class="btn small" id="openBackupsDir">エクスプローラーで開く</button></div>
+      <p class="hint" style="color:var(--bad)">※セキュリティソフトでこのプログラムが許可されていない場合は保存・変更はされません。ここが保存されない場合は、下の「ブランド・保存設定」タブにある「書き出し先フォルダ」を、ダウンロードフォルダなど別の場所に変更してからもう一度お試しください。保存・変更ができない場合は移行後のパソコンで新たにCSVファイルを取り込む必要があります。必要に応じてPDFファイルを保存してください。</p>` : ""}
       <div class="field">
         <label>パスフレーズ</label><input type="password" id="bkPass1" placeholder="8文字以上">
         <p class="hint" style="margin-top:4px">※<strong>8文字以上</strong>で設定してください（上限なし）。8文字未満は作成できません。</p>
@@ -284,7 +293,7 @@ function renderBackup(panel) {
     </div>
   `;
   const openBackupsDirBtn = panel.querySelector("#openBackupsDir");
-  if (openBackupsDirBtn) openBackupsDirBtn.onclick = () => revealInExplorerToast(nativeInfo.backupsDir);
+  if (openBackupsDirBtn) openBackupsDirBtn.onclick = () => revealInExplorerToast(backupsDirEffective);
 
   let restoreFileText = null;
 
@@ -306,9 +315,8 @@ function renderBackup(panel) {
     const blob = new Blob([envelopeText], { type: "application/json" });
 
     if (isDesktop) {
-      const backupsDir = (nativeInfo.backupsDir || "").trim();
-      if (!backupsDir) { toast("保存先フォルダが確認できません。", "bad"); return; }
-      const path = joinPath(backupsDir, suggested);
+      if (!backupsDirEffective) { toast("保存先フォルダが確認できません。", "bad"); return; }
+      const path = joinPath(backupsDirEffective, suggested);
       try {
         const result = await saveBlobToPath(path, blob);
         if (result.ok) {
@@ -413,8 +421,9 @@ function renderBrand(panel, root) {
     </div>
     ${isDesktop ? `
     <div class="card">
-      <div class="card-title"><h3>PDF・Wordの書き出し先フォルダ</h3></div>
-      <p class="hint" style="margin-bottom:8px">Report Studioの「PDFデータを印刷・保存」と、下の「このツールについて」からの仕様書ダウンロードは、保存の都度ダイアログで場所を尋ねず、ここで指定したフォルダへ直接保存されます（未指定の場合はReportsフォルダに保存されます）。保存後は自動でエクスプローラーが開き、ファイルが選択された状態で表示されます。</p>
+      <div class="card-title"><h3>PDF・Word・バックアップの書き出し先フォルダ</h3></div>
+      <p class="hint" style="margin-bottom:8px">Report Studioの「PDFデータを印刷・保存」、下の「このツールについて」からの仕様書ダウンロード、バックアップ画面の「バックアップを作成」は、保存の都度ダイアログで場所を尋ねず、ここで指定したフォルダへ直接保存されます（未指定の場合はReports・Backupsフォルダにそれぞれ保存されます）。保存後は自動でエクスプローラーが開き、ファイルが選択された状態で表示されます。</p>
+      <p class="hint" style="margin-bottom:8px">既定のフォルダ（アプリのデータ保存先の中）への保存がセキュリティソフト等でブロックされる場合は、ここを「ダウンロード」フォルダなど別の場所に変更すると保存できることがあります。</p>
       <div class="field">
         <label>書き出し先フォルダ</label>
         <div class="row" style="gap:8px">
