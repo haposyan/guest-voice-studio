@@ -173,26 +173,57 @@ async function commitImport(root) {
   const existing = db.records;
   const result = importRows(state.parsed, db.itemMappings, db.stores, existing, batchId);
 
-  db.records = existing.concat(result.newRecords);
-  const batches = db.importBatches;
-  batches.unshift({
-    id: batchId,
-    filename: state.file.name,
-    importedAt: new Date().toISOString(),
-    importer: db.currentUser()?.name,
-    encoding: state.encoding,
-    totalRows: state.preview.totalRows,
-    success: result.success,
-    duplicate: result.duplicate,
-    error: result.error,
-    excluded: result.excluded,
-    warnedNoId: result.warnedNoId,
-    errorRows: result.errorRows.slice(0, 50),
-    periodStart: state.preview.periodStart,
-    periodEnd: state.preview.periodEnd,
-  });
-  db.importBatches = batches;
-  db.audit("csv_import", batchId, `${state.file.name} 成功${result.success}件 重複${result.duplicate}件 エラー${result.error}件`);
+  // v2.26: 「1万件を取り込むとフリーズする」報告 — 実際は取込処理自体は
+  // 一瞬で終わっていたが、続く db.records への保存（JSON化してlocalStorage
+  // へ書き込み）がブラウザ機能のlocalStorage容量上限（Chromiumは1オリジン
+  // あたり約10MB）を超えて例外を投げ、それをここで一切catchしていなかった
+  // ため、「取込中…」の表示のまま何も起きず、フリーズしたように見えていた
+  // （エラーも出ない・件数も反映されない）。1万件のCSVは項目数によっては
+  // 数十件×1万行でこの上限に達し得る規模。ここでtry/catchし、少なくとも
+  // 「本当に失敗した」ことが分かるようにする（db.records自体はJSON文字列化
+  // →setItemが丸ごと失敗するかどうかなので、失敗時は書き込み前の状態のまま
+  // ＝データが壊れたり中途半端に保存されたりはしない）。
+  let saveError = null;
+  try {
+    db.records = existing.concat(result.newRecords);
+    const batches = db.importBatches;
+    batches.unshift({
+      id: batchId,
+      filename: state.file.name,
+      importedAt: new Date().toISOString(),
+      importer: db.currentUser()?.name,
+      encoding: state.encoding,
+      totalRows: state.preview.totalRows,
+      success: result.success,
+      duplicate: result.duplicate,
+      error: result.error,
+      excluded: result.excluded,
+      warnedNoId: result.warnedNoId,
+      errorRows: result.errorRows.slice(0, 50),
+      periodStart: state.preview.periodStart,
+      periodEnd: state.preview.periodEnd,
+    });
+    db.importBatches = batches;
+    db.audit("csv_import", batchId, `${state.file.name} 成功${result.success}件 重複${result.duplicate}件 エラー${result.error}件`);
+  } catch (err) {
+    saveError = err;
+  }
+
+  if (saveError) {
+    console.error("commitImport failed:", saveError);
+    const isQuota = saveError.name === "QuotaExceededError" || saveError.code === 22;
+    area.innerHTML = `
+      <div class="card">
+        <div class="card-title"><h3 style="color:var(--bad)">取込に失敗しました</h3></div>
+        <p class="hint">${isQuota
+          ? "ブラウザの保存容量の上限に達したため、データを保存できませんでした。一度に取り込む件数を減らす（CSVファイルを分割する）か、不要な古いデータの整理についてご相談ください。"
+          : `処理中にエラーが発生しました: ${escapeHtml(saveError.message || String(saveError))}`}</p>
+        <p class="hint">今回の取込は反映されていません（データは取込前の状態のまま保持されています）。もう一度お試しいただくか、状況を開発側にお伝えください。</p>
+      </div>
+    `;
+    toast("取込に失敗しました" + (isQuota ? "（保存容量の上限）" : ""), "bad");
+    return;
+  }
 
   area.innerHTML = `
     <div class="card">
