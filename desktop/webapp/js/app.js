@@ -155,4 +155,16 @@ window.addEventListener("hashchange", () => {
   if (db.isConfigured && document.getElementById("screenEn")) renderScreen();
 });
 
+// v2.23: "CSVをドラッグ＆ドロップするとブラウザ画面に遷移する" — Import's
+// own #dropzone (and Action Board's kanban columns) already call
+// preventDefault() in their own dragover/drop handlers, but that only
+// covers a drop that lands exactly on them. Missing by even a few pixels —
+// easy to do — falls through to Chromium's *default* drag-and-drop
+// handling, which navigates the whole WebView2 view to the dropped file
+// (the app itself is replaced by a raw view of the file's contents). This
+// window-level fallback swallows any drop that isn't already claimed by a
+// more specific handler, instead of letting the browser navigate away.
+window.addEventListener("dragover", (e) => e.preventDefault());
+window.addEventListener("drop", (e) => e.preventDefault());
+
 render();
