@@ -29,7 +29,7 @@ public partial class MainWindow : Window
     // actually running the build they think they extracted — real-machine
     // feedback repeatedly turned out to be re-testing a stale exe via an old
     // desktop shortcut (see EnsureDesktopShortcut).
-    private const string AppVersion = "2.28.0";
+    private const string AppVersion = "2.29.0";
     private const string AppVersionDate = "2026年9月4日";
 
     private string _dataDir = "";
@@ -115,22 +115,24 @@ public partial class MainWindow : Window
         // Chromium feature is the standard first fix (same flag used by VS
         // Code, Slack, Teams and other Chromium/Electron-embedding apps for
         // this exact symptom).
-        // v2.28: real-machine testing on the latest build (with the above
-        // flag already active) showed the exact same stutter still
-        // happening, unchanged — so on this particular machine, disabling
-        // occlusion tracking alone wasn't the fix. The next-most-common
-        // escalation for this class of report in Chromium/Electron apps is
-        // to disable GPU-accelerated compositing outright, which removes
-        // Chromium's DirectComposition/GPU compositor from the picture
-        // entirely (DWM then captures a plain software-rendered surface for
-        // the thumbnail, which doesn't have this interaction problem) —
-        // this app's UI has no heavy graphics/animation, so falling back to
-        // software rendering should be visually unnoticeable. Kept both
-        // flags together since the first is harmless even if it isn't what
-        // actually fixes it on this machine.
+        // v2.28 (REVERTED in v2.29): tried adding --disable-gpu-compositing
+        // --disable-gpu on top of the above, on the theory that removing
+        // Chromium's GPU compositor entirely would sidestep whatever it was
+        // doing that DWM's Alt+Tab thumbnail capture didn't like. Real-
+        // machine testing showed this was much worse than the original
+        // problem: --disable-gpu doesn't reliably fall back to a working
+        // software renderer in every WebView2/driver combination — on this
+        // machine it produced a blank white window after the splash screen
+        // (the page silently failed to paint anything at all). Reverted
+        // immediately; back to only the one flag that has a full release's
+        // worth of real-machine evidence behind it (v2.22–v2.27) with no
+        // downside seen. The Alt+Tab stutter itself is still open — do not
+        // re-attempt a GPU-disabling flag here without a way to verify it
+        // first; a blank/dead app is a far worse failure mode than a slow
+        // Alt+Tab switch.
         var envOptions = new CoreWebView2EnvironmentOptions
         {
-            AdditionalBrowserArguments = "--disable-features=CalculateNativeWinOcclusion --disable-gpu-compositing --disable-gpu",
+            AdditionalBrowserArguments = "--disable-features=CalculateNativeWinOcclusion",
         };
 
         CoreWebView2Environment env;
